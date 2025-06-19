@@ -34,4 +34,4 @@ jobs:
         env:
           NEWS: ${{secrets.NEWS}}
         run: |
-          uv run python FireBase.py  # 執行你的程式
+          uv run python Together.py  # 執行你的程式
