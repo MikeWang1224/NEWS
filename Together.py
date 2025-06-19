@@ -17,7 +17,7 @@ headers = {
 }
 
 # 初始化 Firebase
-key_dict=json.loads(os.environ["GOOGLE_APPLICATION_CREDENTIALS"])
+key_dict=json.loads(os.environ["NEWS"])
 cred = credentials.Certificate(key_dict)
 firebase_admin.initialize_app(cred)
 db = firestore.client()

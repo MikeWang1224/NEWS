@@ -29,12 +29,10 @@ jobs:
       - name: Install dependencies
         run: |
           uv sync
-      - name: Restore service account key
-        run: |
-          echo "${{ secrets.NEWS }}" | base64 -d > service-account.json
 
+      
       - name: Run your program
         env:
-          GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/service-account.json
+          NEWS: ${{secrets.NEWS}}
         run: |
-          uv run python Together.py
+          uv run python Together.py  # 執行你的程式
