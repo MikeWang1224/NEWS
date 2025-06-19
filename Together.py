@@ -2,6 +2,7 @@
 import os
 import re
 import time
+import json
 import requests
 from datetime import datetime
 from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
@@ -16,7 +17,8 @@ headers = {
 }
 
 # 初始化 Firebase
-cred = credentials.Certificate("stockgpt-150d0-firebase-adminsdk-fbsvc-874413114f.json")
+key_dict=json.loads(os.environ["NEWS"])
+cred = credentials.Certificate(key_dict)
 firebase_admin.initialize_app(cred)
 db = firestore.client()
 
