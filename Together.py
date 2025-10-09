@@ -136,7 +136,7 @@ def fetch_honhai_news(limit=8):
     try:
         resp = requests.get(search_url, headers=headers)
         soup = BeautifulSoup(resp.text, "html.parser")
-        articles = soup.select('li[data-testid="search-result"] a.js-content-viewer') or soup.select('h3 a')
+        articles = soup.select('li[data-testid=\"search-result\"] a.js-content-viewer') or soup.select('h3 a')
         for a in articles:
             if len(news_list) >= limit:
                 break
@@ -148,6 +148,29 @@ def fetch_honhai_news(limit=8):
             news_list.append({'title': title, 'content': summary})
     except Exception as e:
         print(f"⚠️ 鴻海新聞抓取失敗: {e}")
+    return news_list
+
+# 🟣 ---------------------- 聯電新聞 ---------------------- #
+def fetch_umc_news(limit=8):
+    print("\n📡 抓取 Yahoo 聯電新聞（台灣）...")
+    base_url = "https://tw.news.yahoo.com"
+    search_url = f"{base_url}/search?p=聯電"
+    news_list = []
+    try:
+        resp = requests.get(search_url, headers=headers)
+        soup = BeautifulSoup(resp.text, "html.parser")
+        articles = soup.select('li[data-testid=\"search-result\"] a.js-content-viewer') or soup.select('h3 a')
+        for a in articles:
+            if len(news_list) >= limit:
+                break
+            title = a.get_text(strip=True)
+            href = a.get("href")
+            if href and not href.startswith("http"):
+                href = base_url + href
+            summary = fetch_article_content(href, 'yahoo')
+            news_list.append({'title': title, 'content': summary})
+    except Exception as e:
+        print(f"⚠️ 聯電新聞抓取失敗: {e}")
     return news_list
 
 # ---------------------- 儲存合併 ---------------------- #
@@ -164,11 +187,16 @@ if __name__ == '__main__':
     yahoo_news = fetch_yahoo_news()
     cnbc_news = fetch_cnbc_news()
     honhai_news = fetch_honhai_news()  # 🟢 鴻海新聞
+    umc_news = fetch_umc_news()        # 🟣 聯電新聞
 
-    # 存到 NEWS
+    # 存到 NEWS（台積電相關）
     all_news = technews + yahoo_news + cnbc_news
     save_news_to_firestore(all_news, "NEWS")
 
-    # 存到 NEWS_Foxxcon（同層不同 collection）
+    # 存到 NEWS_Foxxcon（鴻海相關）
     if honhai_news:
         save_news_to_firestore(honhai_news, "NEWS_Foxxcon")
+
+    # 存到 NEWS_UMC（聯電相關）
+    if umc_news:
+        save_news_to_firestore(umc_news, "NEWS_UMC")
