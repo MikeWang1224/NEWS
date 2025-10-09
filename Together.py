@@ -1,4 +1,4 @@
-# 統一匯入
+# -*- coding: utf-8 -*-
 import os
 import re
 import time
@@ -16,13 +16,13 @@ headers = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
 }
 
-# 初始化 Firebase
-key_dict=json.loads(os.environ["NEWS"])
+# ---------------------- 初始化 Firebase ---------------------- #
+key_dict = json.loads(os.environ["NEWS"])
 cred = credentials.Certificate(key_dict)
 firebase_admin.initialize_app(cred)
 db = firestore.client()
 
-#---------------------- TechNews ----------------------#
+# ---------------------- TechNews ---------------------- #
 def fetch_technews(limit=10):
     print("\n📡 抓取 TechNews（台灣）...")
     search_url = 'https://technews.tw/google-search/?googlekeyword=台積電'
@@ -54,7 +54,7 @@ def fetch_technews(limit=10):
             continue
     return news
 
-#---------------------- Yahoo News ----------------------#
+# ---------------------- Yahoo News ---------------------- #
 def fetch_yahoo_news(limit=5):
     print("\n📡 抓取 Yahoo 新聞（台灣）...")
     base_url = "https://tw.news.yahoo.com"
@@ -94,7 +94,7 @@ def fetch_article_content(url, source):
     except:
         return "無法取得新聞內容"
 
-#---------------------- CNBC ----------------------#
+# ---------------------- CNBC ---------------------- #
 def fetch_cnbc_news(limit=8):
     print("\n📡 抓取 CNBC 新聞（美國）...")
     search_urls = [
@@ -127,18 +127,48 @@ def fetch_cnbc_news(limit=8):
             continue
     return news_list
 
-#---------------------- 儲存合併 ----------------------#
-def save_news_to_firestore(all_news):
-    collection_ref = db.collection("NEWS")
+# 🟢 ---------------------- 鴻海新聞 ---------------------- #
+def fetch_honhai_news(limit=8):
+    print("\n📡 抓取 Yahoo 鴻海新聞（台灣）...")
+    base_url = "https://tw.news.yahoo.com"
+    search_url = f"{base_url}/search?p=鴻海"
+    news_list = []
+    try:
+        resp = requests.get(search_url, headers=headers)
+        soup = BeautifulSoup(resp.text, "html.parser")
+        articles = soup.select('li[data-testid="search-result"] a.js-content-viewer') or soup.select('h3 a')
+        for a in articles:
+            if len(news_list) >= limit:
+                break
+            title = a.get_text(strip=True)
+            href = a.get("href")
+            if href and not href.startswith("http"):
+                href = base_url + href
+            summary = fetch_article_content(href, 'yahoo')
+            news_list.append({'title': title, 'content': summary})
+    except Exception as e:
+        print(f"⚠️ 鴻海新聞抓取失敗: {e}")
+    return news_list
+
+# ---------------------- 儲存合併 ---------------------- #
+def save_news_to_firestore(all_news, collection_name="NEWS"):
+    collection_ref = db.collection(collection_name)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     doc_ref = collection_ref.document(timestamp)
     doc_ref.set({f"news_{i+1}": news for i, news in enumerate(all_news)})
-    print(f"\n✅ 新聞已寫入 Firestore：NEWS/{timestamp}")
+    print(f"✅ 已寫入 Firestore：{collection_name}/{timestamp}")
 
+# ---------------------- 主程式 ---------------------- #
 if __name__ == '__main__':
     technews = fetch_technews()
     yahoo_news = fetch_yahoo_news()
     cnbc_news = fetch_cnbc_news()
+    honhai_news = fetch_honhai_news()  # 🟢 鴻海新聞
 
+    # 存到 NEWS
     all_news = technews + yahoo_news + cnbc_news
-    save_news_to_firestore(all_news)
+    save_news_to_firestore(all_news, "NEWS")
+
+    # 存到 NEWS_Foxxcon（同層不同 collection）
+    if honhai_news:
+        save_news_to_firestore(honhai_news, "NEWS_Foxxcon")
