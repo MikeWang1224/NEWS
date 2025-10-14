@@ -23,9 +23,9 @@ firebase_admin.initialize_app(cred)
 db = firestore.client()
 
 # ---------------------- TechNews ---------------------- #
-def fetch_technews(limit=10):
-    print("\n📡 抓取 TechNews（台灣）...")
-    search_url = 'https://technews.tw/google-search/?googlekeyword=台積電'
+def fetch_technews(keyword="台積電", limit=10):
+    print(f"\n📡 抓取 TechNews（{keyword}）...")
+    search_url = f'https://technews.tw/google-search/?googlekeyword={keyword}'
     links = []
     try:
         res = requests.get(search_url, headers=headers)
@@ -55,11 +55,12 @@ def fetch_technews(limit=10):
     return news
 
 # ---------------------- Yahoo News ---------------------- #
-def fetch_yahoo_news(limit=5):
-    print("\n📡 抓取 Yahoo 新聞（台灣）...")
+def fetch_yahoo_news(keyword="台積電", limit=5):
+    print(f"\n📡 抓取 Yahoo 新聞（{keyword}）...")
     base_url = "https://tw.news.yahoo.com"
-    search_url = f"{base_url}/search?p=台積電"
+    search_url = f"{base_url}/search?p={keyword}&sort=time"
     news_list = []
+    seen_titles = set()
     try:
         resp = requests.get(search_url, headers=headers)
         soup = BeautifulSoup(resp.text, "html.parser")
@@ -68,6 +69,9 @@ def fetch_yahoo_news(limit=5):
             if len(news_list) >= limit:
                 break
             title = a.get_text(strip=True)
+            if title in seen_titles:
+                continue
+            seen_titles.add(title)
             href = a.get("href")
             if href and not href.startswith("http"):
                 href = base_url + href
@@ -77,6 +81,71 @@ def fetch_yahoo_news(limit=5):
         print(f"⚠️ Yahoo 抓取失敗: {e}")
     return news_list
 
+# ---------------------- Yahoo Finance 聯電新聞 ---------------------- #
+def fetch_umc_yahoo_official(limit=8):
+    print("\n📡 抓取 Yahoo Finance 聯電新聞（官方頁）...")
+    base_url = "https://tw.stock.yahoo.com"
+    search_url = f"{base_url}/quote/2303.TW/news"
+    news_list = []
+    seen_titles = set()
+    try:
+        resp = requests.get(search_url, headers=headers)
+        soup = BeautifulSoup(resp.text, "html.parser")
+        articles = soup.select('li.js-stream-content a') or soup.select('h3 a')
+        for a in articles:
+            if len(news_list) >= limit:
+                break
+            title = a.get_text(strip=True)
+            if title in seen_titles:
+                continue
+            seen_titles.add(title)
+            href = a.get("href")
+            if href and not href.startswith("http"):
+                href = base_url + href
+            summary = fetch_article_content(href, 'yahoo')
+            news_list.append({'title': title, 'content': summary})
+    except Exception as e:
+        print(f"⚠️ Yahoo Finance UMC 抓取失敗: {e}")
+    return news_list
+
+# ---------------------- CNBC ---------------------- #
+def fetch_cnbc_news(keyword_list=["TSMC"], limit=8):
+    print(f"\n📡 抓取 CNBC 新聞（關鍵字：{', '.join(keyword_list)}）...")
+    search_urls = [
+        "https://www.cnbc.com/search/?query=" + '+'.join(keyword_list),
+        "https://www.cnbc.com/technology/",
+        "https://www.cnbc.com/semiconductors/"
+    ]
+    news_list = []
+    seen_titles = set()
+    for url in search_urls:
+        if len(news_list) >= limit:
+            break
+        try:
+            resp = requests.get(url, headers=headers)
+            soup = BeautifulSoup(resp.text, "html.parser")
+            for a in soup.select('article a, h2 a, h3 a'):
+                if len(news_list) >= limit:
+                    break
+                title = a.get_text(strip=True)
+                if not title or title in seen_titles:
+                    continue
+                if not any(x.lower() in title.lower() for x in keyword_list):
+                    continue
+                seen_titles.add(title)
+                href = a.get("href")
+                if not href or '/video/' in href:
+                    continue
+                if not href.startswith("http"):
+                    href = "https://www.cnbc.com" + href
+                content = fetch_article_content(href, 'cnbc')
+                news_list.append({'title': title, 'content': content})
+                time.sleep(2)
+        except:
+            continue
+    return news_list[:limit]
+
+# ---------------------- 內容抓取 ---------------------- #
 def fetch_article_content(url, source):
     try:
         r = requests.get(url, headers=headers)
@@ -94,86 +163,21 @@ def fetch_article_content(url, source):
     except:
         return "無法取得新聞內容"
 
-# ---------------------- CNBC ---------------------- #
-def fetch_cnbc_news(limit=8):
-    print("\n📡 抓取 CNBC 新聞（美國）...")
-    search_urls = [
-        "https://www.cnbc.com/search/?query=TSMC",
-        "https://www.cnbc.com/search/?query=Taiwan+Semiconductor",
-        "https://www.cnbc.com/technology/",
-        "https://www.cnbc.com/semiconductors/"
-    ]
-    news_list = []
-    for url in search_urls:
-        if len(news_list) >= limit:
-            break
-        try:
-            resp = requests.get(url, headers=headers)
-            soup = BeautifulSoup(resp.text, "html.parser")
-            for a in soup.select('article a, h2 a, h3 a'):
-                if len(news_list) >= limit:
-                    break
-                title = a.get_text(strip=True)
-                href = a.get("href")
-                if not href or '/video/' in href:
-                    continue
-                if not href.startswith("http"):
-                    href = "https://www.cnbc.com" + href
-                if any(x in title.lower() for x in ['tsmc', 'semiconductor', 'chip']):
-                    content = fetch_article_content(href, 'cnbc')
-                    news_list.append({'title': title, 'content': content})
-                    time.sleep(2)
-        except:
-            continue
-    return news_list
-
-# 🟢 ---------------------- 鴻海新聞 ---------------------- #
+# ---------------------- 鴻海新聞 ---------------------- #
 def fetch_honhai_news(limit=8):
     print("\n📡 抓取 Yahoo 鴻海新聞（台灣）...")
-    base_url = "https://tw.news.yahoo.com"
-    search_url = f"{base_url}/search?p=鴻海"
-    news_list = []
-    try:
-        resp = requests.get(search_url, headers=headers)
-        soup = BeautifulSoup(resp.text, "html.parser")
-        articles = soup.select('li[data-testid=\"search-result\"] a.js-content-viewer') or soup.select('h3 a')
-        for a in articles:
-            if len(news_list) >= limit:
-                break
-            title = a.get_text(strip=True)
-            href = a.get("href")
-            if href and not href.startswith("http"):
-                href = base_url + href
-            summary = fetch_article_content(href, 'yahoo')
-            news_list.append({'title': title, 'content': summary})
-    except Exception as e:
-        print(f"⚠️ 鴻海新聞抓取失敗: {e}")
-    return news_list
+    return fetch_yahoo_news("鴻海", limit)
 
-# 🟣 ---------------------- 聯電新聞 ---------------------- #
-def fetch_umc_news(limit=8):
-    print("\n📡 抓取 Yahoo 聯電新聞（台灣）...")
-    base_url = "https://tw.news.yahoo.com"
-    search_url = f"{base_url}/search?p=聯電"
-    news_list = []
-    try:
-        resp = requests.get(search_url, headers=headers)
-        soup = BeautifulSoup(resp.text, "html.parser")
-        articles = soup.select('li[data-testid=\"search-result\"] a.js-content-viewer') or soup.select('h3 a')
-        for a in articles:
-            if len(news_list) >= limit:
-                break
-            title = a.get_text(strip=True)
-            href = a.get("href")
-            if href and not href.startswith("http"):
-                href = base_url + href
-            summary = fetch_article_content(href, 'yahoo')
-            news_list.append({'title': title, 'content': summary})
-    except Exception as e:
-        print(f"⚠️ 聯電新聞抓取失敗: {e}")
-    return news_list
+# ---------------------- 聯電 TechNews ---------------------- #
+def fetch_umc_technews(limit=4):
+    return fetch_technews("聯電", limit)
 
-# ---------------------- 儲存合併 ---------------------- #
+# ---------------------- 聯電 CNBC ---------------------- #
+def fetch_umc_cnbc(limit=3):
+    keywords = ["UMC", "United Microelectronics", "聯電", "semiconductor"]
+    return fetch_cnbc_news(keywords, limit)
+
+# ---------------------- 儲存到 Firestore ---------------------- #
 def save_news_to_firestore(all_news, collection_name="NEWS"):
     collection_ref = db.collection(collection_name)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -183,20 +187,29 @@ def save_news_to_firestore(all_news, collection_name="NEWS"):
 
 # ---------------------- 主程式 ---------------------- #
 if __name__ == '__main__':
+    # 台積電新聞
     technews = fetch_technews()
     yahoo_news = fetch_yahoo_news()
-    cnbc_news = fetch_cnbc_news()
-    honhai_news = fetch_honhai_news()  # 🟢 鴻海新聞
-    umc_news = fetch_umc_news()        # 🟣 聯電新聞
+    cnbc_news = fetch_cnbc_news(["TSMC"], 8)
 
-    # 存到 NEWS（台積電相關）
+    # 鴻海新聞
+    honhai_news = fetch_honhai_news()
+
+    # 聯電新聞（最多15則）
+    umc_yahoo = fetch_umc_yahoo_official(8)
+    umc_tech = fetch_umc_technews(4)
+    umc_cnbc = fetch_umc_cnbc(3)
+    umc_news = umc_yahoo + umc_tech + umc_cnbc
+
+    # ---------------------- 儲存 ---------------------- #
+    # 台積電
     all_news = technews + yahoo_news + cnbc_news
     save_news_to_firestore(all_news, "NEWS")
 
-    # 存到 NEWS_Foxxcon（鴻海相關）
+    # 鴻海
     if honhai_news:
         save_news_to_firestore(honhai_news, "NEWS_Foxxcon")
 
-    # 存到 NEWS_UMC（聯電相關）
+    # 聯電
     if umc_news:
         save_news_to_firestore(umc_news, "NEWS_UMC")
