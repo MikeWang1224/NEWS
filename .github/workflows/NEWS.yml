@@ -3,24 +3,24 @@ name: Run Program on Push
 on:
   push:
     branches:
-      - main  # 你想要觸發的分支，可以修改為 master 或其他分支
+      - main  # 觸發分支，可改為 master 等
 
   schedule:
-      # 台灣時間 05:01（UTC 20:01）
-    - cron: '11 6 * * *'  # 每天下午2點11分觸發
+      # 台灣時間 22:30（UTC 14:30）
+    - cron: '30 14 * * *'
 
 jobs:
   run_program:
-    runs-on: ubuntu-latest  # 使用的操作系統，可以選擇 ubuntu、windows 或 macos
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4  # 檢出代碼
+        uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'  # 設定 Python 版本
+          python-version: '3.11'
 
       - name: install uv
         run: |
@@ -30,9 +30,8 @@ jobs:
         run: |
           uv sync
 
-      
       - name: Run your program
         env:
-          NEWS: ${{secrets.NEWS}}
+          NEWS: ${{ secrets.NEWS }}
         run: |
-          uv run python Together.py  # 執行你的程式
+          uv run python Together.py
