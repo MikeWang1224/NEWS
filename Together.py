@@ -187,29 +187,22 @@ def save_news_to_firestore(all_news, collection_name="NEWS"):
 
 # ---------------------- 主程式 ---------------------- #
 if __name__ == '__main__':
-    # 台積電新聞
-    technews = fetch_technews()
-    yahoo_news = fetch_yahoo_news()
-    cnbc_news = fetch_cnbc_news(["TSMC"], 8)
-
-    # 鴻海新聞
-    honhai_news = fetch_honhai_news()
-
-    # 聯電新聞（最多15則）
-    umc_yahoo = fetch_umc_yahoo_official(8)
-    umc_tech = fetch_umc_technews(4)
-    umc_cnbc = fetch_umc_cnbc(3)
-    umc_news = umc_yahoo + umc_tech + umc_cnbc
-
-    # ---------------------- 儲存 ---------------------- #
-    # 台積電
+    # 台積電新聞（平均分配 30 則）
+    technews = fetch_technews(limit=10)
+    yahoo_news = fetch_yahoo_news(limit=10)
+    cnbc_news = fetch_cnbc_news(["TSMC"], limit=10)
     all_news = technews + yahoo_news + cnbc_news
     save_news_to_firestore(all_news, "NEWS")
 
-    # 鴻海
+    # 鴻海新聞（Yahoo 擴充至 30 則）
+    honhai_news = fetch_honhai_news(limit=30)
     if honhai_news:
         save_news_to_firestore(honhai_news, "NEWS_Foxxcon")
 
-    # 聯電
+    # 聯電新聞（平均分配 30 則）
+    umc_yahoo = fetch_umc_yahoo_official(limit=10)
+    umc_tech = fetch_umc_technews(limit=10)
+    umc_cnbc = fetch_umc_cnbc(limit=10)
+    umc_news = umc_yahoo + umc_tech + umc_cnbc
     if umc_news:
         save_news_to_firestore(umc_news, "NEWS_UMC")
