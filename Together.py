@@ -96,13 +96,19 @@ def fetch_umc_yahoo_official(limit=8):
             if len(news_list) >= limit:
                 break
             title = a.get_text(strip=True)
-            if title in seen_titles:
+            if not title or title in seen_titles:
+                continue
+            # ✅ 僅保留標題包含聯電關鍵字的新聞
+            if not any(x in title for x in ["聯電", "UMC", "United Microelectronics"]):
                 continue
             seen_titles.add(title)
             href = a.get("href")
             if href and not href.startswith("http"):
                 href = base_url + href
             summary = fetch_article_content(href, 'yahoo')
+            # ✅ 若內容也沒有提到聯電，就略過
+            if not any(x in summary for x in ["聯電", "UMC", "United Microelectronics"]):
+                continue
             news_list.append({'title': title, 'content': summary})
     except Exception as e:
         print(f"⚠️ Yahoo Finance UMC 抓取失敗: {e}")
