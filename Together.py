@@ -1,11 +1,10 @@
 # -*- coding: utf-8 -*-
 """
 多公司新聞抓取程式（台積電 + 鴻海 + 聯電）
-修正版：
+版本：v3.1
 ✅ Firestore 檔名只用日期（無時間尾碼）
-✅ 自動覆蓋當天新聞文件
-✅ 增強 Yahoo / TechNews / CNBC 抓取穩定性
-✅ 已可與分析程式搭配使用
+✅ 當天重跑自動覆蓋
+✅ Yahoo / TechNews / CNBC 抓取穩定
 """
 
 import os
@@ -181,13 +180,14 @@ def fetch_cnbc_news(keyword_list=["TSMC"], limit=8):
             continue
     return news_list[:limit]
 
-# ---------------------- 儲存 Firestore ---------------------- #
+# ---------------------- Firestore 儲存 ---------------------- #
 def save_news_to_firestore(all_news, collection_name="NEWS"):
+    """覆蓋當天的新聞文件，只用日期命名"""
     collection_ref = db.collection(collection_name)
-    doc_id = datetime.now().strftime("%Y%m%d")  # ✅ 只用日期
+    doc_id = datetime.now().strftime("%Y%m%d")  # ✅ 只有日期
     doc_ref = collection_ref.document(doc_id)
     doc_ref.set({f"news_{i+1}": news for i, news in enumerate(all_news)})
-    print(f"✅ 已寫入 Firestore：{collection_name}/{doc_id}")
+    print(f"✅ 已寫入 Firestore：{collection_name}/{doc_id}（覆蓋模式）")
 
 # ---------------------- 主程式 ---------------------- #
 if __name__ == "__main__":
@@ -202,7 +202,7 @@ if __name__ == "__main__":
     # 鴻海
     honhai_news = fetch_yahoo_news("鴻海", limit=15)
     if honhai_news:
-        save_news_to_firestore(honhai_news, "NEWS_Foxxcon")
+        save_news_to_firestore(honhai_news, "NEWS_Foxconn")
 
     # 聯電
     umc_yahoo = fetch_umc_yahoo_official(limit=10)
