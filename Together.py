@@ -98,7 +98,7 @@ def fetch_umc_yahoo_official(limit=8):
             title = a.get_text(strip=True)
             if not title or title in seen_titles:
                 continue
-            # ✅ 僅保留標題包含聯電關鍵字的新聞
+            # ✅ 只保留含聯電關鍵字的標題
             if not any(x in title for x in ["聯電", "UMC", "United Microelectronics"]):
                 continue
             seen_titles.add(title)
@@ -106,7 +106,7 @@ def fetch_umc_yahoo_official(limit=8):
             if href and not href.startswith("http"):
                 href = base_url + href
             summary = fetch_article_content(href, 'yahoo')
-            # ✅ 若內容也沒有提到聯電，就略過
+            # ✅ 內容也必須包含聯電相關詞
             if not any(x in summary for x in ["聯電", "UMC", "United Microelectronics"]):
                 continue
             news_list.append({'title': title, 'content': summary})
@@ -186,26 +186,28 @@ def fetch_umc_cnbc(limit=3):
 # ---------------------- 儲存到 Firestore ---------------------- #
 def save_news_to_firestore(all_news, collection_name="NEWS"):
     collection_ref = db.collection(collection_name)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    # ✅ 文件名稱只用日期
+    timestamp = datetime.now().strftime("%Y%m%d")
     doc_ref = collection_ref.document(timestamp)
+    # ✅ 若當日已存在，會覆蓋舊資料
     doc_ref.set({f"news_{i+1}": news for i, news in enumerate(all_news)})
     print(f"✅ 已寫入 Firestore：{collection_name}/{timestamp}")
 
 # ---------------------- 主程式 ---------------------- #
 if __name__ == '__main__':
-    # 台積電新聞（平均分配 30 則）
+    # 台積電新聞
     technews = fetch_technews(limit=10)
     yahoo_news = fetch_yahoo_news(limit=10)
     cnbc_news = fetch_cnbc_news(["TSMC"], limit=10)
     all_news = technews + yahoo_news + cnbc_news
     save_news_to_firestore(all_news, "NEWS")
 
-    # 鴻海新聞（Yahoo 擴充至 30 則）
+    # 鴻海新聞
     honhai_news = fetch_honhai_news(limit=30)
     if honhai_news:
         save_news_to_firestore(honhai_news, "NEWS_Foxxcon")
 
-    # 聯電新聞（平均分配 30 則）
+    # 聯電新聞
     umc_yahoo = fetch_umc_yahoo_official(limit=10)
     umc_tech = fetch_umc_technews(limit=10)
     umc_cnbc = fetch_umc_cnbc(limit=10)
