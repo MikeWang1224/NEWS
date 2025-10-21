@@ -202,7 +202,7 @@ if __name__ == "__main__":
     # 鴻海
     honhai_news = fetch_yahoo_news("鴻海", limit=15)
     if honhai_news:
-        save_news_to_firestore(honhai_news, "NEWS_Foxconn")
+        save_news_to_firestore(honhai_news, "NEWS_Foxxcon")
 
     # 聯電
     umc_yahoo = fetch_umc_yahoo_official(limit=10)
