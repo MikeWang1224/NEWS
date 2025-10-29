@@ -1,14 +1,13 @@
 # -*- coding: utf-8 -*-
 """
 多公司新聞抓取程式（台積電 + 鴻海 + 聯電）
-版本：v3.1
+版本：v3.2
 ✅ Firestore 檔名只用日期（無時間尾碼）
-✅ 當天重跑自動覆蓋
+✅ 只儲存新聞 title + content（不含 Groq 結果）
 ✅ Yahoo / TechNews / CNBC 抓取穩定
 """
 
 import os
-import re
 import time
 import json
 import requests
@@ -182,12 +181,22 @@ def fetch_cnbc_news(keyword_list=["TSMC"], limit=8):
 
 # ---------------------- Firestore 儲存 ---------------------- #
 def save_news_to_firestore(all_news, collection_name="NEWS"):
-    """覆蓋當天的新聞文件，只用日期命名"""
+    """覆蓋當天的新聞文件，只用日期命名（僅 title + content）"""
     collection_ref = db.collection(collection_name)
-    doc_id = datetime.now().strftime("%Y%m%d")  # ✅ 只有日期
+    doc_id = datetime.now().strftime("%Y%m%d")
     doc_ref = collection_ref.document(doc_id)
-    doc_ref.set({f"news_{i+1}": news for i, news in enumerate(all_news)})
-    print(f"✅ 已寫入 Firestore：{collection_name}/{doc_id}（覆蓋模式）")
+
+    # 準備資料格式
+    news_dict = {}
+    for i, news in enumerate(all_news, start=1):
+        news_dict[f"news_{i}"] = {
+            "title": news.get("title", "無標題"),
+            "content": news.get("content", "無內容")
+        }
+
+    # 覆蓋式寫入
+    doc_ref.set(news_dict)
+    print(f"✅ 已寫入 Firestore：{collection_name}/{doc_id}（新聞筆數：{len(all_news)}）")
 
 # ---------------------- 主程式 ---------------------- #
 if __name__ == "__main__":
