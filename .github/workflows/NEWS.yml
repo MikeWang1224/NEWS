@@ -3,11 +3,9 @@ name: Run Program on Push
 on:
   push:
     branches:
-      - main  # 觸發分支，可改為 master 等
-
+      - main
   schedule:
-      # 台灣時間 22:30（UTC 14:30）
-    - cron: '30 14 * * *'
+    - cron: '30 14 * * *'  # 每天台灣時間 22:30 執行
 
 jobs:
   run_program:
@@ -22,13 +20,13 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: install uv
-        run: |
-          pipx install uv      
+      - name: Install uv
+        run: pipx install uv      
 
       - name: Install dependencies
         run: |
           uv sync
+          uv pip install packaging google-cloud-firestore
 
       - name: Run your program
         env:
