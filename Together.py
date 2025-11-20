@@ -1,13 +1,12 @@
 # -*- coding: utf-8 -*-
 """
 多公司新聞抓取程式（台積電 + 鴻海 + 聯電）
-版本：v4.1
+版本：v5.0
 ✅ Firestore 檔名只用日期（無時間尾碼）
-✅ 只儲存新聞 title + content + 當日漲跌
-✅ 完全不用 yfinance，僅用 requests
+✅ 儲存新聞 title + content + 當日漲跌
+✅ 用 yfinance 抓漲跌
 ✅ Yahoo / TechNews / CNBC 抓取穩定
 """
- 
 import os
 import time
 import json
@@ -17,10 +16,12 @@ from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
 import warnings
 import firebase_admin
 from firebase_admin import credentials, firestore
+import yfinance as yf
+import pandas as pd
 
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 
-# ---------------------- 爬蟲設定 ---------------------- #
+# ---------------------- 設定 ---------------------- #
 headers = {
     'User-Agent': (
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
@@ -29,48 +30,43 @@ headers = {
     )
 }
 
-# ---------------------- 初始化 Firebase ---------------------- #
 key_dict = json.loads(os.environ["NEWS"])
 cred = credentials.Certificate(key_dict)
 firebase_admin.initialize_app(cred)
 db = firestore.client()
 
-# ---------------------- 股價漲跌 ---------------------- #
 ticker_map = {
     "台積電": "2330.TW",
     "鴻海": "2317.TW",
     "聯電": "2303.TW"
 }
 
-def fetch_stock_change(ticker="2330.TW"):
-    """
-    用 Yahoo Finance API 抓取最近兩天收盤價，計算當日漲跌。
-    回傳格式：+5.00 (1.23%)
-    """
-    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?range=2d&interval=1d"
+# ---------------------- 抓股價漲跌 ---------------------- #
+def fetch_stock_change_yf(stock_name):
+    ticker = ticker_map.get(stock_name)
+    if not ticker:
+        return "無資料"
     try:
-        resp = requests.get(url, timeout=10).json()
-        result = resp['chart']['result'][0]
-        closes = result['indicators']['quote'][0]['close']
-        if len(closes) < 2 or closes[-1] is None or closes[-2] is None:
+        df = yf.Ticker(ticker).history(period="2d")
+        if len(df) < 2:
             return "無資料"
-        change = closes[-1] - closes[-2]
-        change_pct = (change / closes[-2]) * 100
+        last_close = df['Close'][-1]
+        prev_close = df['Close'][-2]
+        change = last_close - prev_close
+        pct = change / prev_close * 100
         sign = "+" if change >= 0 else ""
-        return f"{sign}{change:.2f} ({sign}{change_pct:.2f}%)"
+        return f"{sign}{change:.2f} ({sign}{pct:.2f}%)"
     except Exception:
         return "無資料"
 
 def add_price_change(news_list, stock_name):
-    """把當日漲跌加入每篇新聞"""
-    change = fetch_stock_change(ticker_map.get(stock_name, ""))
+    change = fetch_stock_change_yf(stock_name)
     for news in news_list:
         news["price_change"] = change
     return news_list
 
 # ---------------------- 共用工具 ---------------------- #
 def fetch_article_content(url, source):
-    """抓取各新聞頁內容"""
     try:
         r = requests.get(url, headers=headers, timeout=10)
         soup = BeautifulSoup(r.text, 'html.parser')
@@ -89,7 +85,7 @@ def fetch_article_content(url, source):
     except Exception:
         return "無法取得新聞內容"
 
-# ---------------------- TechNews ---------------------- #
+# ---------------------- 各新聞來源 ---------------------- #
 def fetch_technews(keyword="台積電", limit=10):
     print(f"\n📡 抓取 TechNews（{keyword}）...")
     search_url = f'https://technews.tw/google-search/?googlekeyword={keyword}'
@@ -121,7 +117,6 @@ def fetch_technews(keyword="台積電", limit=10):
             continue
     return news
 
-# ---------------------- Yahoo News ---------------------- #
 def fetch_yahoo_news(keyword="台積電", limit=5):
     print(f"\n📡 抓取 Yahoo 新聞（{keyword}）...")
     base_url = "https://tw.news.yahoo.com"
@@ -147,7 +142,6 @@ def fetch_yahoo_news(keyword="台積電", limit=5):
         print(f"⚠️ Yahoo 抓取失敗: {e}")
     return news_list
 
-# ---------------------- Yahoo Finance（聯電） ---------------------- #
 def fetch_umc_yahoo_official(limit=8):
     print("\n📡 抓取 Yahoo Finance 聯電新聞（官方頁）...")
     base_url = "https://tw.stock.yahoo.com"
@@ -177,7 +171,6 @@ def fetch_umc_yahoo_official(limit=8):
         print(f"⚠️ Yahoo Finance 聯電抓取失敗: {e}")
     return news_list
 
-# ---------------------- CNBC ---------------------- #
 def fetch_cnbc_news(keyword_list=["TSMC"], limit=8):
     print(f"\n📡 抓取 CNBC 新聞（關鍵字：{', '.join(keyword_list)}）...")
     search_urls = [
@@ -215,11 +208,9 @@ def fetch_cnbc_news(keyword_list=["TSMC"], limit=8):
 
 # ---------------------- Firestore 儲存 ---------------------- #
 def save_news_to_firestore(all_news, collection_name="NEWS"):
-    """覆蓋當天的新聞文件，只用日期命名（僅 title + content + price_change）"""
     collection_ref = db.collection(collection_name)
     doc_id = datetime.now().strftime("%Y%m%d")
     doc_ref = collection_ref.document(doc_id)
-
     news_dict = {}
     for i, news in enumerate(all_news, start=1):
         news_dict[f"news_{i}"] = {
@@ -227,7 +218,6 @@ def save_news_to_firestore(all_news, collection_name="NEWS"):
             "price_change": news.get("price_change", "無資料"),
             "content": news.get("content", "無內容")
         }
-
     doc_ref.set(news_dict)
     print(f"✅ 已寫入 Firestore：{collection_name}/{doc_id}（新聞筆數：{len(all_news)}）")
 
