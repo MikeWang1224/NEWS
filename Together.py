@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """
 多公司新聞抓取程式（台積電 + 鴻海 + 聯電）
-版本：v4.0
+版本：v4.1
 ✅ Firestore 檔名只用日期（無時間尾碼）
 ✅ 只儲存新聞 title + content + 當日漲跌
+✅ 完全不用 yfinance，僅用 requests
 ✅ Yahoo / TechNews / CNBC 抓取穩定
 """
  
@@ -16,7 +17,6 @@ from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
 import warnings
 import firebase_admin
 from firebase_admin import credentials, firestore
-import yfinance as yf
 
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 
@@ -42,17 +42,20 @@ ticker_map = {
     "聯電": "2303.TW"
 }
 
-def fetch_stock_change(ticker):
-    """回傳今日漲跌 + 百分比"""
+def fetch_stock_change(ticker="2330.TW"):
+    """
+    用 Yahoo Finance API 抓取最近兩天收盤價，計算當日漲跌。
+    回傳格式：+5.00 (1.23%)
+    """
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?range=2d&interval=1d"
     try:
-        stock = yf.Ticker(ticker)
-        hist = stock.history(period="2d")
-        if len(hist) < 2:
+        resp = requests.get(url, timeout=10).json()
+        result = resp['chart']['result'][0]
+        closes = result['indicators']['quote'][0]['close']
+        if len(closes) < 2 or closes[-1] is None or closes[-2] is None:
             return "無資料"
-        today = hist.iloc[-1]
-        yesterday = hist.iloc[-2]
-        change = today['Close'] - yesterday['Close']
-        change_pct = (change / yesterday['Close']) * 100
+        change = closes[-1] - closes[-2]
+        change_pct = (change / closes[-2]) * 100
         sign = "+" if change >= 0 else ""
         return f"{sign}{change:.2f} ({sign}{change_pct:.2f}%)"
     except Exception:
