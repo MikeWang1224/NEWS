@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
 多公司新聞抓取程式（台積電 + 鴻海 + 聯電）
-版本：v3.2
+版本：v4.0
 ✅ Firestore 檔名只用日期（無時間尾碼）
-✅ 只儲存新聞 title + content（不含 Groq 結果）
+✅ 只儲存新聞 title + content + 當日漲跌
 ✅ Yahoo / TechNews / CNBC 抓取穩定
 """
  
@@ -16,6 +16,7 @@ from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
 import warnings
 import firebase_admin
 from firebase_admin import credentials, firestore
+import yfinance as yf
 
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 
@@ -33,6 +34,36 @@ key_dict = json.loads(os.environ["NEWS"])
 cred = credentials.Certificate(key_dict)
 firebase_admin.initialize_app(cred)
 db = firestore.client()
+
+# ---------------------- 股價漲跌 ---------------------- #
+ticker_map = {
+    "台積電": "2330.TW",
+    "鴻海": "2317.TW",
+    "聯電": "2303.TW"
+}
+
+def fetch_stock_change(ticker):
+    """回傳今日漲跌 + 百分比"""
+    try:
+        stock = yf.Ticker(ticker)
+        hist = stock.history(period="2d")
+        if len(hist) < 2:
+            return "無資料"
+        today = hist.iloc[-1]
+        yesterday = hist.iloc[-2]
+        change = today['Close'] - yesterday['Close']
+        change_pct = (change / yesterday['Close']) * 100
+        sign = "+" if change >= 0 else ""
+        return f"{sign}{change:.2f} ({sign}{change_pct:.2f}%)"
+    except Exception:
+        return "無資料"
+
+def add_price_change(news_list, stock_name):
+    """把當日漲跌加入每篇新聞"""
+    change = fetch_stock_change(ticker_map.get(stock_name, ""))
+    for news in news_list:
+        news["price_change"] = change
+    return news_list
 
 # ---------------------- 共用工具 ---------------------- #
 def fetch_article_content(url, source):
@@ -181,20 +212,19 @@ def fetch_cnbc_news(keyword_list=["TSMC"], limit=8):
 
 # ---------------------- Firestore 儲存 ---------------------- #
 def save_news_to_firestore(all_news, collection_name="NEWS"):
-    """覆蓋當天的新聞文件，只用日期命名（僅 title + content）"""
+    """覆蓋當天的新聞文件，只用日期命名（僅 title + content + price_change）"""
     collection_ref = db.collection(collection_name)
     doc_id = datetime.now().strftime("%Y%m%d")
     doc_ref = collection_ref.document(doc_id)
 
-    # 準備資料格式
     news_dict = {}
     for i, news in enumerate(all_news, start=1):
         news_dict[f"news_{i}"] = {
             "title": news.get("title", "無標題"),
+            "price_change": news.get("price_change", "無資料"),
             "content": news.get("content", "無內容")
         }
 
-    # 覆蓋式寫入
     doc_ref.set(news_dict)
     print(f"✅ 已寫入 Firestore：{collection_name}/{doc_id}（新聞筆數：{len(all_news)}）")
 
@@ -206,11 +236,13 @@ if __name__ == "__main__":
     cnbc_news = fetch_cnbc_news(["TSMC"], limit=10)
     all_tsmc = technews + yahoo_news + cnbc_news
     if all_tsmc:
+        all_tsmc = add_price_change(all_tsmc, "台積電")
         save_news_to_firestore(all_tsmc, "NEWS")
 
     # 鴻海
     honhai_news = fetch_yahoo_news("鴻海", limit=15)
     if honhai_news:
+        honhai_news = add_price_change(honhai_news, "鴻海")
         save_news_to_firestore(honhai_news, "NEWS_Foxxcon")
 
     # 聯電
@@ -219,6 +251,7 @@ if __name__ == "__main__":
     umc_cnbc = fetch_cnbc_news(["UMC", "United Microelectronics", "聯電"], limit=6)
     umc_news = umc_yahoo + umc_tech + umc_cnbc
     if umc_news:
+        umc_news = add_price_change(umc_news, "聯電")
         save_news_to_firestore(umc_news, "NEWS_UMC")
 
     print("\n🎉 全部新聞抓取完成！")
