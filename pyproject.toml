@@ -8,4 +8,6 @@ dependencies = [
     "firebase-admin>=6.6.0",
     "beautifulsoup4>=4.13.4",
     "requests>=2.32.4",
+    "yfinance>=0.2.41",
+    "pandas>=2.1.0"
 ]
