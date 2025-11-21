@@ -15,7 +15,7 @@ import os
 import time
 import json
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
 import warnings
 import firebase_admin
@@ -68,8 +68,8 @@ def fetch_stock_change_yf(stock_name):
         df = yf.Ticker(ticker).history(period="2d")
         if len(df) < 2:
             return "無資料"
-        last_close = df['Close'][-1]
-        prev_close = df['Close'][-2]
+        last_close = df['Close'].iloc[-1]
+        prev_close = df['Close'].iloc[-2]
         change = last_close - prev_close
         pct = change / prev_close * 100
         sign = "+" if change >= 0 else ""
@@ -89,15 +89,13 @@ def generate_embedding(text):
         return []
     for model_name in (EMBED_MODEL, FALLBACK_MODEL):
         try:
-            resp = client.embeddings(
+            resp = client.embeddings.create(
                 model=model_name,
                 input=text
             )
             return resp.data[0].embedding
         except Exception as e:
             print(f"⚠️ Groq embedding 生成失敗 (模型={model_name}): {e}")
-            # 若模型失敗，嘗試下一個
-    # 若兩個模型皆失敗，返回空 list
     return []
 
 # ---------------------- 共用工具 ---------------------- #
@@ -185,7 +183,7 @@ def fetch_umc_yahoo_official(limit=8):
     search_url = f"{base_url}/quote/2303.TW/news"
     news_list, seen_titles = [], set()
     today = datetime.now().date()
-    yesterday = today.fromordinal(today.toordinal() - 1)
+    yesterday = today - timedelta(days=1)
     try:
         resp = requests.get(search_url, headers=headers)
         soup = BeautifulSoup(resp.text, 'html.parser')
@@ -229,7 +227,7 @@ def fetch_cnbc_news(keyword_list=["TSMC"], limit=8):
     ]
     news_list, seen_titles = [], set()
     today = datetime.now().date()
-    yesterday = today.fromordinal(today.toordinal() - 1)
+    yesterday = today - timedelta(days=1)
     def extract_date(article):
         time_tag = article.find("time")
         if not time_tag:
