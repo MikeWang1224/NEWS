@@ -40,9 +40,14 @@ cred = credentials.Certificate(key_dict)
 firebase_admin.initialize_app(cred)
 db = firestore.client()
 
-# Groq client
-client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
+# ---------------------- Groq client ---------------------- #
+api_key = os.environ.get("GROQ_API_KEY")
+if not api_key:
+    raise ValueError("⚠️ 找不到 GROQ_API_KEY，請確認 Secret 設定正確！")
 
+client = Groq(api_key=api_key)
+
+# ---------------------- 股票對應 ---------------------- #
 ticker_map = {
     "台積電": "2330.TW",
     "鴻海": "2317.TW",
@@ -73,11 +78,11 @@ def add_price_change(news_list, stock_name):
         news["price_change"] = change
     return news_list
 
-# ---------------------- Embedding（改用 Groq） ---------------------- #
+# ---------------------- Embedding（Groq） ---------------------- #
 def generate_embedding(text):
     try:
-        resp = client.embeddings(
-            model="groq-embedding-3-large",
+        resp = client.embeddings.create(
+            model="text-embedding-3-large",  # Groq 官方提供 embedding 模型
             input=text
         )
         return resp.data[0].embedding
