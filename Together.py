@@ -234,7 +234,7 @@ if __name__ == "__main__":
     fox_news = fetch_yahoo_news("鴻海", 12)
     if fox_news:
         fox_news = add_price_change(fox_news, "鴻海")
-        save_news(fox_news, "NEWS_Foxconn")
+        save_news(fox_news, "NEWS_Foxxcon")
 
     # 聯電
     umc_news = fetch_technews("聯電", 8) + fetch_yahoo_news("聯電", 10) + fetch_cnbc_news(["UMC"], 8)
