@@ -1,12 +1,15 @@
 # -*- coding: utf-8 -*-
 """
 多公司新聞抓取程式（台積電 + 鴻海 + 聯電）
-版本：v5.0
-✅ Firestore 檔名只用日期（無時間尾碼）
-✅ 儲存新聞 title + content + 當日漲跌
-✅ 用 yfinance 抓漲跌
-✅ Yahoo / TechNews / CNBC 抓取穩定
+版本：v5.1（聯電新聞日期修正版）
+------------------------------------------------
+✔ Firestore 檔名只用日期（無時間尾碼）
+✔ 儲存新聞 title + content + 當日漲跌
+✔ 用 yfinance 抓漲跌
+✔ Yahoo / TechNews / CNBC 抓取穩定
+✔ 聯電新聞新增「今天 / 昨天」日期過濾 ← 主要修正
 """
+
 import os
 import time
 import json
@@ -70,6 +73,7 @@ def fetch_article_content(url, source):
     try:
         r = requests.get(url, headers=headers, timeout=10)
         soup = BeautifulSoup(r.text, 'html.parser')
+
         if source == 'yahoo':
             paragraphs = soup.select('article p') or soup.select('p')
         elif source == 'cnbc':
@@ -80,20 +84,25 @@ def fetch_article_content(url, source):
                     break
         else:
             paragraphs = soup.select('div.entry-content p, div.entry-content h2')
+
         content = '\n'.join([p.get_text(strip=True) for p in paragraphs if len(p.get_text(strip=True)) > 40])
         return content[:1500] + ('...' if len(content) > 1500 else '')
+
     except Exception:
         return "無法取得新聞內容"
 
-# ---------------------- 各新聞來源 ---------------------- #
+
+# ---------------------- TechNews（不改，因為無日期） ---------------------- #
 def fetch_technews(keyword="台積電", limit=10):
     print(f"\n📡 抓取 TechNews（{keyword}）...")
     search_url = f'https://technews.tw/google-search/?googlekeyword={keyword}'
     links, news = [], []
+
     try:
         res = requests.get(search_url, headers=headers)
         res.raise_for_status()
         soup = BeautifulSoup(res.text, 'html.parser')
+
         for a in soup.find_all('a', href=True):
             href = a['href']
             if href.startswith('https://technews.tw/') and all(
@@ -101,10 +110,13 @@ def fetch_technews(keyword="台積電", limit=10):
             ):
                 if href not in links:
                     links.append(href)
+
         links = links[:limit]
+
     except Exception as e:
         print(f"⚠️ TechNews 抓取失敗: {e}")
         return []
+
     for link in links:
         try:
             r = requests.get(link, headers=headers)
@@ -115,102 +127,198 @@ def fetch_technews(keyword="台積電", limit=10):
             time.sleep(1)
         except Exception:
             continue
+
     return news
 
+
+# ---------------------- Yahoo（一般搜尋） ---------------------- #
 def fetch_yahoo_news(keyword="台積電", limit=5):
     print(f"\n📡 抓取 Yahoo 新聞（{keyword}）...")
     base_url = "https://tw.news.yahoo.com"
     search_url = f"{base_url}/search?p={keyword}&sort=time"
+
     news_list, seen_titles = [], set()
+
     try:
         resp = requests.get(search_url, headers=headers)
         soup = BeautifulSoup(resp.text, "html.parser")
-        articles = soup.select('li[data-testid="search-result"] a.js-content-viewer') or soup.select('h3 a')
+
+        articles = soup.select('li[data-testid="search-result"] a.js-content-viewer') \
+                   or soup.select('h3 a')
+
         for a in articles:
             if len(news_list) >= limit:
                 break
+
             title = a.get_text(strip=True)
             if not title or title in seen_titles:
                 continue
             seen_titles.add(title)
+
             href = a.get("href")
             if href and not href.startswith("http"):
                 href = base_url + href
+
             summary = fetch_article_content(href, 'yahoo')
             news_list.append({'title': title, 'content': summary})
+
     except Exception as e:
         print(f"⚠️ Yahoo 抓取失敗: {e}")
+
     return news_list
 
+
+
+# ---------------------- Yahoo Finance（聯電官方頁）+ 日期判斷 ---------------------- #
 def fetch_umc_yahoo_official(limit=8):
     print("\n📡 抓取 Yahoo Finance 聯電新聞（官方頁）...")
+
     base_url = "https://tw.stock.yahoo.com"
     search_url = f"{base_url}/quote/2303.TW/news"
+
     news_list, seen_titles = [], set()
+
+    today = datetime.now().date()
+    yesterday = today.fromordinal(today.toordinal() - 1)
+
     try:
         resp = requests.get(search_url, headers=headers)
         soup = BeautifulSoup(resp.text, "html.parser")
-        articles = soup.select('li.js-stream-content a') or soup.select('h3 a')
-        for a in articles:
+
+        articles = soup.select('li.js-stream-content')
+
+        for item in articles:
             if len(news_list) >= limit:
                 break
+
+            a = item.select_one('a')
+            if not a:
+                continue
+
             title = a.get_text(strip=True)
             if not title or title in seen_titles:
                 continue
-            if not any(x in title for x in ["聯電", "UMC", "United Microelectronics"]):
+
+            # 讀時間
+            time_tag = item.select_one('time')
+            if not time_tag:
                 continue
+
+            date_str = time_tag.get('datetime', '')[:10]
+
+            try:
+                pub_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+            except:
+                continue
+
+            # ❗ 只保留 今天 / 昨天
+            if pub_date not in [today, yesterday]:
+                continue
+
             seen_titles.add(title)
+
             href = a.get("href")
             if href and not href.startswith("http"):
                 href = base_url + href
+
             summary = fetch_article_content(href, 'yahoo')
-            if not any(x in summary for x in ["聯電", "UMC", "United Microelectronics"]):
-                continue
-            news_list.append({'title': title, 'content': summary})
+
+            news_list.append({
+                'title': title,
+                'content': summary
+            })
+
     except Exception as e:
         print(f"⚠️ Yahoo Finance 聯電抓取失敗: {e}")
+
     return news_list
 
+
+# ---------------------- CNBC（含日期判斷） ---------------------- #
 def fetch_cnbc_news(keyword_list=["TSMC"], limit=8):
-    print(f"\n📡 抓取 CNBC 新聞（關鍵字：{', '.join(keyword_list)}）...")
+    print(f"\n📡 抓取 CNBC 新聞（{'/'.join(keyword_list)}）...")
+
     search_urls = [
         "https://www.cnbc.com/search/?query=" + '+'.join(keyword_list),
         "https://www.cnbc.com/technology/",
         "https://www.cnbc.com/semiconductors/"
     ]
+
     news_list, seen_titles = [], set()
+
+    today = datetime.now().date()
+    yesterday = today.fromordinal(today.toordinal() - 1)
+
+    def extract_date(article):
+        time_tag = article.find("time")
+        if not time_tag:
+            return None
+        dt = time_tag.get("datetime", "")[:10]
+        try:
+            return datetime.strptime(dt, "%Y-%m-%d").date()
+        except:
+            return None
+
     for url in search_urls:
+
         if len(news_list) >= limit:
             break
+
         try:
             resp = requests.get(url, headers=headers)
             soup = BeautifulSoup(resp.text, "html.parser")
-            for a in soup.select('article a, h2 a, h3 a'):
+
+            articles = soup.select("article")
+
+            for art in articles:
+
                 if len(news_list) >= limit:
                     break
+
+                a = art.find("a")
+                if not a:
+                    continue
+
                 title = a.get_text(strip=True)
                 if not title or title in seen_titles:
                     continue
+
+                # keyword
                 if not any(x.lower() in title.lower() for x in keyword_list):
                     continue
+
+                # 日期判斷
+                pub_date = extract_date(art)
+                if pub_date not in [today, yesterday]:
+                    continue
+
                 seen_titles.add(title)
+
                 href = a.get("href")
                 if not href or '/video/' in href:
                     continue
                 if not href.startswith("http"):
                     href = "https://www.cnbc.com" + href
+
                 content = fetch_article_content(href, 'cnbc')
-                news_list.append({'title': title, 'content': content})
-                time.sleep(2)
-        except Exception:
+
+                news_list.append({
+                    'title': title,
+                    'content': content
+                })
+
+        except:
             continue
+
     return news_list[:limit]
+
 
 # ---------------------- Firestore 儲存 ---------------------- #
 def save_news_to_firestore(all_news, collection_name="NEWS"):
     collection_ref = db.collection(collection_name)
     doc_id = datetime.now().strftime("%Y%m%d")
     doc_ref = collection_ref.document(doc_id)
+
     news_dict = {}
     for i, news in enumerate(all_news, start=1):
         news_dict[f"news_{i}"] = {
@@ -218,31 +326,39 @@ def save_news_to_firestore(all_news, collection_name="NEWS"):
             "price_change": news.get("price_change", "無資料"),
             "content": news.get("content", "無內容")
         }
+
     doc_ref.set(news_dict)
-    print(f"✅ 已寫入 Firestore：{collection_name}/{doc_id}（新聞筆數：{len(all_news)}）")
+    print(f"✅ 已寫入 Firestore：{collection_name}/{doc_id}（筆數：{len(all_news)}）")
+
 
 # ---------------------- 主程式 ---------------------- #
 if __name__ == "__main__":
+
     # 台積電
     technews = fetch_technews("台積電", limit=10)
     yahoo_news = fetch_yahoo_news("台積電", limit=10)
     cnbc_news = fetch_cnbc_news(["TSMC"], limit=10)
+
     all_tsmc = technews + yahoo_news + cnbc_news
+
     if all_tsmc:
         all_tsmc = add_price_change(all_tsmc, "台積電")
         save_news_to_firestore(all_tsmc, "NEWS")
 
     # 鴻海
     honhai_news = fetch_yahoo_news("鴻海", limit=15)
+
     if honhai_news:
         honhai_news = add_price_change(honhai_news, "鴻海")
         save_news_to_firestore(honhai_news, "NEWS_Foxxcon")
 
-    # 聯電
+    # 聯電（主角）
     umc_yahoo = fetch_umc_yahoo_official(limit=10)
     umc_tech = fetch_technews("聯電", limit=8)
     umc_cnbc = fetch_cnbc_news(["UMC", "United Microelectronics", "聯電"], limit=6)
+
     umc_news = umc_yahoo + umc_tech + umc_cnbc
+
     if umc_news:
         umc_news = add_price_change(umc_news, "聯電")
         save_news_to_firestore(umc_news, "NEWS_UMC")
