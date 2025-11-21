@@ -21,7 +21,7 @@ import warnings
 import firebase_admin
 from firebase_admin import credentials, firestore
 import yfinance as yf
-from groq import GroqClient  # <- Groq SDK
+from groq import Groq  # <- Groq SDK
 
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 
@@ -41,7 +41,7 @@ firebase_admin.initialize_app(cred)
 db = firestore.client()
 
 # Groq client
-client = GroqClient(api_key=os.environ.get("GROQ_API_KEY"))
+client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 
 ticker_map = {
     "台積電": "2330.TW",
@@ -76,8 +76,8 @@ def add_price_change(news_list, stock_name):
 # ---------------------- Embedding（改用 Groq） ---------------------- #
 def generate_embedding(text):
     try:
-        resp = client.embeddings.create(
-            model="text-embedding-3-large",  # <- Groq 官方提供 embedding 模型
+        resp = client.embeddings(
+            model="groq-embedding-3-large",
             input=text
         )
         return resp.data[0].embedding
