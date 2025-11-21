@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
 """
 多公司新聞抓取程式（台積電 + 鴻海 + 聯電）
-版本：v6（embedding 版）
+版本：v6-groq（embedding 版）
 ------------------------------------------------
 ✔ Firestore 檔名只用日期（無時間尾碼）
 ✔ 儲存新聞 title + content + 當日漲跌 + embedding
 ✔ 用 yfinance 抓漲跌
 ✔ Yahoo / TechNews / CNBC 抓取穩定
 ✔ 聯電新聞新增「今天 / 昨天」日期過濾
-✔ 新增 embedding 生成（向量）
+✔ embedding 改用 Groq
 """
 
 import os
@@ -21,7 +21,7 @@ import warnings
 import firebase_admin
 from firebase_admin import credentials, firestore
 import yfinance as yf
-from openai import OpenAI
+from groq import GroqClient  # <- Groq SDK
 
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 
@@ -40,8 +40,8 @@ cred = credentials.Certificate(key_dict)
 firebase_admin.initialize_app(cred)
 db = firestore.client()
 
-# OpenAI client
-client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+# Groq client
+client = GroqClient(api_key=os.environ.get("GROQ_API_KEY"))
 
 ticker_map = {
     "台積電": "2330.TW",
@@ -73,16 +73,16 @@ def add_price_change(news_list, stock_name):
         news["price_change"] = change
     return news_list
 
-# ---------------------- Embedding ---------------------- #
+# ---------------------- Embedding（改用 Groq） ---------------------- #
 def generate_embedding(text):
     try:
         resp = client.embeddings.create(
-            model="text-embedding-3-large",
+            model="text-embedding-3-large",  # <- Groq 官方提供 embedding 模型
             input=text
         )
         return resp.data[0].embedding
     except Exception as e:
-        print(f"⚠️ embedding 生成失敗: {e}")
+        print(f"⚠️ Groq embedding 生成失敗: {e}")
         return []
 
 # ---------------------- 共用工具 ---------------------- #
