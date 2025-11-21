@@ -1,13 +1,14 @@
 # -*- coding: utf-8 -*-
 """
 多公司新聞抓取程式（台積電 + 鴻海 + 聯電）
-版本：v5.1（聯電新聞日期修正版）
+版本：v6（embedding 版）
 ------------------------------------------------
 ✔ Firestore 檔名只用日期（無時間尾碼）
-✔ 儲存新聞 title + content + 當日漲跌
+✔ 儲存新聞 title + content + 當日漲跌 + embedding
 ✔ 用 yfinance 抓漲跌
 ✔ Yahoo / TechNews / CNBC 抓取穩定
-✔ 聯電新聞新增「今天 / 昨天」日期過濾 ← 主要修正
+✔ 聯電新聞新增「今天 / 昨天」日期過濾
+✔ 新增 embedding 生成（向量）
 """
 
 import os
@@ -20,7 +21,7 @@ import warnings
 import firebase_admin
 from firebase_admin import credentials, firestore
 import yfinance as yf
-import pandas as pd
+from openai import OpenAI
 
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 
@@ -33,10 +34,14 @@ headers = {
     )
 }
 
+# Firestore
 key_dict = json.loads(os.environ["NEWS"])
 cred = credentials.Certificate(key_dict)
 firebase_admin.initialize_app(cred)
 db = firestore.client()
+
+# OpenAI client
+client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
 ticker_map = {
     "台積電": "2330.TW",
@@ -68,6 +73,18 @@ def add_price_change(news_list, stock_name):
         news["price_change"] = change
     return news_list
 
+# ---------------------- Embedding ---------------------- #
+def generate_embedding(text):
+    try:
+        resp = client.embeddings.create(
+            model="text-embedding-3-large",
+            input=text
+        )
+        return resp.data[0].embedding
+    except Exception as e:
+        print(f"⚠️ embedding 生成失敗: {e}")
+        return []
+
 # ---------------------- 共用工具 ---------------------- #
 def fetch_article_content(url, source):
     try:
@@ -91,8 +108,7 @@ def fetch_article_content(url, source):
     except Exception:
         return "無法取得新聞內容"
 
-
-# ---------------------- TechNews（不改，因為無日期） ---------------------- #
+# ---------------------- TechNews ---------------------- #
 def fetch_technews(keyword="台積電", limit=10):
     print(f"\n📡 抓取 TechNews（{keyword}）...")
     search_url = f'https://technews.tw/google-search/?googlekeyword={keyword}'
@@ -130,8 +146,7 @@ def fetch_technews(keyword="台積電", limit=10):
 
     return news
 
-
-# ---------------------- Yahoo（一般搜尋） ---------------------- #
+# ---------------------- Yahoo 新聞 ---------------------- #
 def fetch_yahoo_news(keyword="台積電", limit=5):
     print(f"\n📡 抓取 Yahoo 新聞（{keyword}）...")
     base_url = "https://tw.news.yahoo.com"
@@ -167,9 +182,7 @@ def fetch_yahoo_news(keyword="台積電", limit=5):
 
     return news_list
 
-
-
-# ---------------------- Yahoo Finance（聯電官方頁）+ 日期判斷 ---------------------- #
+# ---------------------- Yahoo Finance 聯電 ---------------------- #
 def fetch_umc_yahoo_official(limit=8):
     print("\n📡 抓取 Yahoo Finance 聯電新聞（官方頁）...")
 
@@ -199,7 +212,6 @@ def fetch_umc_yahoo_official(limit=8):
             if not title or title in seen_titles:
                 continue
 
-            # 讀時間
             time_tag = item.select_one('time')
             if not time_tag:
                 continue
@@ -211,7 +223,6 @@ def fetch_umc_yahoo_official(limit=8):
             except:
                 continue
 
-            # ❗ 只保留 今天 / 昨天
             if pub_date not in [today, yesterday]:
                 continue
 
@@ -233,8 +244,7 @@ def fetch_umc_yahoo_official(limit=8):
 
     return news_list
 
-
-# ---------------------- CNBC（含日期判斷） ---------------------- #
+# ---------------------- CNBC ---------------------- #
 def fetch_cnbc_news(keyword_list=["TSMC"], limit=8):
     print(f"\n📡 抓取 CNBC 新聞（{'/'.join(keyword_list)}）...")
 
@@ -245,7 +255,6 @@ def fetch_cnbc_news(keyword_list=["TSMC"], limit=8):
     ]
 
     news_list, seen_titles = [], set()
-
     today = datetime.now().date()
     yesterday = today.fromordinal(today.toordinal() - 1)
 
@@ -266,7 +275,7 @@ def fetch_cnbc_news(keyword_list=["TSMC"], limit=8):
 
         try:
             resp = requests.get(url, headers=headers)
-            soup = BeautifulSoup(resp.text, "html.parser")
+            soup = BeautifulSoup(resp.text, 'html.parser')
 
             articles = soup.select("article")
 
@@ -283,11 +292,9 @@ def fetch_cnbc_news(keyword_list=["TSMC"], limit=8):
                 if not title or title in seen_titles:
                     continue
 
-                # keyword
                 if not any(x.lower() in title.lower() for x in keyword_list):
                     continue
 
-                # 日期判斷
                 pub_date = extract_date(art)
                 if pub_date not in [today, yesterday]:
                     continue
@@ -312,7 +319,6 @@ def fetch_cnbc_news(keyword_list=["TSMC"], limit=8):
 
     return news_list[:limit]
 
-
 # ---------------------- Firestore 儲存 ---------------------- #
 def save_news_to_firestore(all_news, collection_name="NEWS"):
     collection_ref = db.collection(collection_name)
@@ -321,15 +327,16 @@ def save_news_to_firestore(all_news, collection_name="NEWS"):
 
     news_dict = {}
     for i, news in enumerate(all_news, start=1):
+        embedding = generate_embedding(news.get("content", ""))
         news_dict[f"news_{i}"] = {
             "title": news.get("title", "無標題"),
             "price_change": news.get("price_change", "無資料"),
-            "content": news.get("content", "無內容")
+            "content": news.get("content", "無內容"),
+            "embedding": embedding
         }
 
     doc_ref.set(news_dict)
     print(f"✅ 已寫入 Firestore：{collection_name}/{doc_id}（筆數：{len(all_news)}）")
-
 
 # ---------------------- 主程式 ---------------------- #
 if __name__ == "__main__":
@@ -340,25 +347,22 @@ if __name__ == "__main__":
     cnbc_news = fetch_cnbc_news(["TSMC"], limit=10)
 
     all_tsmc = technews + yahoo_news + cnbc_news
-
     if all_tsmc:
         all_tsmc = add_price_change(all_tsmc, "台積電")
         save_news_to_firestore(all_tsmc, "NEWS")
 
     # 鴻海
     honhai_news = fetch_yahoo_news("鴻海", limit=15)
-
     if honhai_news:
         honhai_news = add_price_change(honhai_news, "鴻海")
         save_news_to_firestore(honhai_news, "NEWS_Foxxcon")
 
-    # 聯電（主角）
+    # 聯電
     umc_yahoo = fetch_umc_yahoo_official(limit=10)
     umc_tech = fetch_technews("聯電", limit=8)
-    umc_cnbc = fetch_cnbc_news(["UMC", "United Microelectronics", "聯電"], limit=6)
+    umc_cnbc = fetch_cnbc_news(["UMC","United Microelectronics","聯電"], limit=6)
 
     umc_news = umc_yahoo + umc_tech + umc_cnbc
-
     if umc_news:
         umc_news = add_price_change(umc_news, "聯電")
         save_news_to_firestore(umc_news, "NEWS_UMC")
