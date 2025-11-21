@@ -9,6 +9,6 @@ dependencies = [
     "beautifulsoup4>=4.13.4",
     "requests>=2.32.4",
     "yfinance>=0.2.41",
-    "pandas>=2.1.0"
+    "pandas>=2.1.0",
     "groq>=0.3.0" 
 ]
