@@ -6,6 +6,7 @@ on:
       - main
   schedule:
     - cron: '30 14 * * *'  # 每天台灣時間 22:30 執行
+    - cron: '0 6 * * *'    # 每天下午 2 點（台灣時間）執行：UTC 06:00
 
 jobs:
   run_program:
@@ -33,6 +34,5 @@ jobs:
           NEWS: ${{ secrets.NEWS }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
 
-          
         run: |
           uv run python Together.py
