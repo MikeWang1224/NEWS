@@ -7,7 +7,7 @@
 ✔ 儲存新聞 title + content + 漲跌 + embedding
 ✔ Hugging Face 免費 Embedding API
 ✔ 若 embedding 失敗，自動存 []
-✔ 新增新聞時間解析，只抓 4 小時內新聞
+✔ 新增新聞時間解析，只抓 36 小時內新聞
 """
  
 import os
@@ -51,7 +51,7 @@ ticker_map = {
 }
 
 # ---------------------- 新增：時間過濾 ---------------------- #
-def is_recent(published_time, hours=4):
+def is_recent(published_time, hours=36):
     """判斷新聞是否在最近幾小時內"""
     now = datetime.now().astimezone()
     return (now - published_time) <= timedelta(hours=hours)
@@ -117,7 +117,7 @@ def fetch_article_content(url, source):
         return "無法取得新聞內容"
 
 # ---------------------- TechNews ---------------------- #
-def fetch_technews(keyword="台積電", limit=10):
+def fetch_technews(keyword="台積電", limit=30):
     print(f"\n📡 TechNews：{keyword}")
     links, news = [], []
     url = f'https://technews.tw/google-search/?googlekeyword={keyword}'
@@ -150,7 +150,7 @@ def fetch_technews(keyword="台積電", limit=10):
                 continue
             published_str = time_tag.get_text(strip=True)
             published_dt = datetime.strptime(published_str, "%Y/%m/%d %H:%M").astimezone()
-            if not is_recent(published_dt, 4):
+            if not is_recent(published_dt, 36):
                 continue  # 太舊的新聞跳過
 
             # 內容
@@ -162,7 +162,7 @@ def fetch_technews(keyword="台積電", limit=10):
     return news
 
 # ---------------------- Yahoo 新聞 ---------------------- #
-def fetch_yahoo_news(keyword="台積電", limit=10):
+def fetch_yahoo_news(keyword="台積電", limit=30):
     print(f"\n📡 Yahoo：{keyword}")
     base = "https://tw.news.yahoo.com"
     url = f"{base}/search?p={keyword}&sort=time"
@@ -193,7 +193,7 @@ def fetch_yahoo_news(keyword="台積電", limit=10):
                 if not time_tag or not time_tag.has_attr("datetime"):
                     continue
                 published_dt = datetime.fromisoformat(time_tag["datetime"].replace("Z", "+00:00")).astimezone()
-                if not is_recent(published_dt, 4):
+                if not is_recent(published_dt, 36):
                     continue
             except:
                 continue
@@ -205,7 +205,7 @@ def fetch_yahoo_news(keyword="台積電", limit=10):
     return news_list
 
 # ---------------------- CNBC ---------------------- #
-def fetch_cnbc_news(keyword_list=["TSMC"], limit=10):
+def fetch_cnbc_news(keyword_list=["TSMC"], limit=20):
     print(f"\n📡 CNBC：{'/'.join(keyword_list)}")
     urls = [
         "https://www.cnbc.com/search/?query=" + '+'.join(keyword_list)
@@ -243,7 +243,7 @@ def fetch_cnbc_news(keyword_list=["TSMC"], limit=10):
                     if not time_tag or not time_tag.has_attr("datetime"):
                         continue
                     published_dt = datetime.fromisoformat(time_tag["datetime"].replace("Z", "+00:00")).astimezone()
-                    if not is_recent(published_dt, 4):
+                    if not is_recent(published_dt, 36):
                         continue
                 except:
                     continue
@@ -278,19 +278,19 @@ def save_news(news_list, collection):
 if __name__ == "__main__":
 
     # 台積電
-    tsmc_news = fetch_technews("台積電", 10) + fetch_yahoo_news("台積電", 10) + fetch_cnbc_news(["TSMC"], 10)
+    tsmc_news = fetch_technews("台積電", 30) + fetch_yahoo_news("台積電", 30) + fetch_cnbc_news(["TSMC"], 20)
     if tsmc_news:
         tsmc_news = add_price_change(tsmc_news, "台積電")
         save_news(tsmc_news, "NEWS")
 
     # 鴻海
-    fox_news = fetch_yahoo_news("鴻海", 12)
+    fox_news = fetch_yahoo_news("鴻海", 30)
     if fox_news:
         fox_news = add_price_change(fox_news, "鴻海")
         save_news(fox_news, "NEWS_Foxxcon")
 
     # 聯電
-    umc_news = fetch_technews("聯電", 8) + fetch_yahoo_news("聯電", 10) + fetch_cnbc_news(["UMC"], 8)
+    umc_news = fetch_technews("聯電", 20) + fetch_yahoo_news("聯電", 30) + fetch_cnbc_news(["UMC"], 20)
     if umc_news:
         umc_news = add_price_change(umc_news, "聯電")
         save_news(umc_news, "NEWS_UMC")
