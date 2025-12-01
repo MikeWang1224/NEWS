@@ -53,7 +53,7 @@ ticker_map = {
 # ---------------------- 新增：時間過濾 ---------------------- #
 def is_recent(published_time, hours=4):
     """判斷新聞是否在最近幾小時內"""
-    now = datetime.now()
+    now = datetime.now().astimezone()
     return (now - published_time) <= timedelta(hours=hours)
 
 # ---------------------- 抓股價漲跌 ---------------------- #
@@ -149,7 +149,7 @@ def fetch_technews(keyword="台積電", limit=10):
             if not time_tag:
                 continue
             published_str = time_tag.get_text(strip=True)
-            published_dt = datetime.strptime(published_str, "%Y/%m/%d %H:%M")
+            published_dt = datetime.strptime(published_str, "%Y/%m/%d %H:%M").astimezone()
             if not is_recent(published_dt, 4):
                 continue  # 太舊的新聞跳過
 
