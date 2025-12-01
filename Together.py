@@ -7,6 +7,7 @@
 ✔ 儲存新聞 title + content + 漲跌 + embedding
 ✔ Hugging Face 免費 Embedding API
 ✔ 若 embedding 失敗，自動存 []
+✔ 新增新聞時間解析，只抓 4 小時內新聞
 """
  
 import os
@@ -48,6 +49,12 @@ ticker_map = {
     "鴻海": "2317.TW",
     "聯電": "2303.TW"
 }
+
+# ---------------------- 新增：時間過濾 ---------------------- #
+def is_recent(published_time, hours=4):
+    """判斷新聞是否在最近幾小時內"""
+    now = datetime.now()
+    return (now - published_time) <= timedelta(hours=hours)
 
 # ---------------------- 抓股價漲跌 ---------------------- #
 def fetch_stock_change(stock_name):
@@ -130,9 +137,25 @@ def fetch_technews(keyword="台積電", limit=10):
         try:
             r = requests.get(link, headers=HEADERS)
             s = BeautifulSoup(r.text, 'html.parser')
-            title = s.find('h1').get_text(strip=True)
+
+            # 標題
+            title_tag = s.find('h1')
+            if not title_tag:
+                continue
+            title = title_tag.get_text(strip=True)
+
+            # 發布時間
+            time_tag = s.find("time", class_="entry-date")
+            if not time_tag:
+                continue
+            published_str = time_tag.get_text(strip=True)
+            published_dt = datetime.strptime(published_str, "%Y/%m/%d %H:%M")
+            if not is_recent(published_dt, 4):
+                continue  # 太舊的新聞跳過
+
+            # 內容
             content = fetch_article_content(link, 'technews')
-            news.append({'title': title, 'content': content})
+            news.append({'title': title, 'content': content, 'published_time': published_dt})
             time.sleep(0.5)
         except:
             continue
@@ -160,8 +183,22 @@ def fetch_yahoo_news(keyword="台積電", limit=10):
             href = a.get("href")
             if href and not href.startswith("http"):
                 href = base + href
+
+            # 文章內容與時間
             content = fetch_article_content(href, 'yahoo')
-            news_list.append({'title': title, 'content': content})
+            try:
+                r2 = requests.get(href, headers=HEADERS)
+                s2 = BeautifulSoup(r2.text, 'html.parser')
+                time_tag = s2.find("time")
+                if not time_tag or not time_tag.has_attr("datetime"):
+                    continue
+                published_dt = datetime.fromisoformat(time_tag["datetime"].replace("Z", "+00:00")).astimezone()
+                if not is_recent(published_dt, 4):
+                    continue
+            except:
+                continue
+
+            news_list.append({'title': title, 'content': content, 'published_time': published_dt})
     except:
         pass
 
@@ -195,9 +232,24 @@ def fetch_cnbc_news(keyword_list=["TSMC"], limit=10):
                 if not href.startswith("http"):
                     href = "https://www.cnbc.com" + href
 
+                # 內容
                 content = fetch_article_content(href, 'cnbc')
+
+                # 時間解析
+                try:
+                    r2 = requests.get(href, headers=HEADERS)
+                    s2 = BeautifulSoup(r2.text, 'html.parser')
+                    time_tag = s2.find("time")
+                    if not time_tag or not time_tag.has_attr("datetime"):
+                        continue
+                    published_dt = datetime.fromisoformat(time_tag["datetime"].replace("Z", "+00:00")).astimezone()
+                    if not is_recent(published_dt, 4):
+                        continue
+                except:
+                    continue
+
                 seen.add(title)
-                news.append({'title': title, 'content': content})
+                news.append({'title': title, 'content': content, 'published_time': published_dt})
         except:
             continue
 
@@ -215,7 +267,8 @@ def save_news(news_list, collection):
             "title": n.get("title", ""),
             "price_change": n.get("price_change", "無資料"),
             "content": n.get("content", ""),
-            "embedding": emb
+            "embedding": emb,
+            "published_time": n.get("published_time").strftime("%Y-%m-%d %H:%M")
         }
 
     ref.set(data)
