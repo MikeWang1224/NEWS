@@ -8,7 +8,7 @@
 ✔ Hugging Face 免費 Embedding API
 ✔ 若 embedding 失敗，自動存 []
 """
-
+ 
 import os
 import time
 import json
