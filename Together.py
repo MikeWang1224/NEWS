@@ -2,7 +2,7 @@
 """
 多公司新聞抓取程式（台積電 + 鴻海 + 聯電）
 版本：v7-huggingface（embedding 版 / GitHub Secret 相容）
-------------------------------------------------
+---------------------- --------------------------
 ✔ Firestore 只用日期當 ID
 ✔ 儲存新聞 title + content + 漲跌 + embedding
 ✔ Hugging Face 免費 Embedding API
