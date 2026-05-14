@@ -1,15 +1,16 @@
 # -*- coding: utf-8 -*-
 """
 多公司新聞抓取程式（台積電 + 鴻海 + 聯電）
-版本：v7-huggingface（embedding 版 / GitHub Secret 相容）
----------------------- --------------------------
-✔ Firestore 只用日期當 ID 
+版本：v8（加入全公司關鍵字過濾）
+------------------------------------------
+✔ Firestore 只用日期當 ID
 ✔ 儲存新聞 title + content + 漲跌 + embedding
 ✔ Hugging Face 免費 Embedding API
 ✔ 若 embedding 失敗，自動存 []
 ✔ 新增新聞時間解析，只抓 36 小時內新聞
-""" 
- 
+✔ [v8 新增] 所有公司都加關鍵字過濾，避免抓到不相關新聞
+"""
+
 import os
 import time
 import json
@@ -50,7 +51,32 @@ ticker_map = {
     "聯電": "2303.TW"
 }
 
-# ---------------------- 新增：時間過濾 ---------------------- #
+# ---------------------- 各公司關鍵字定義 ---------------------- #
+KEYWORDS = {
+    "台積電": ["台積電", "TSMC", "台灣積體電路", "晶圓代工"],
+    "鴻海": ["鴻海", "富士康", "Foxconn", "郭台銘", "鴻准"],
+    "聯電": ["聯電", "聯華電子", "UMC"],
+}
+
+# ---------------------- 通用關鍵字過濾 ---------------------- #
+def filter_news_by_keywords(news_list, stock_name):
+    """只保留標題或內容含有對應公司關鍵字的新聞"""
+    keywords = KEYWORDS.get(stock_name, [])
+    if not keywords:
+        return news_list
+
+    result = []
+    for n in news_list:
+        title = n.get("title", "")
+        content = n.get("content", "")
+        if any(kw in title or kw in content for kw in keywords):
+            result.append(n)
+        else:
+            print(f"⛔ [{stock_name}] 過濾不相關新聞：{title[:40]}")
+    print(f"✅ [{stock_name}] 過濾後剩餘：{len(result)} 則（原始：{len(news_list)} 則）")
+    return result
+
+# ---------------------- 時間過濾 ---------------------- #
 def is_recent(published_time, hours=36):
     """判斷新聞是否在最近幾小時內"""
     now = datetime.now().astimezone()
@@ -88,7 +114,7 @@ def generate_embedding(text):
         res = requests.post(
             HF_API_URL,
             headers=HF_HEADERS,
-            json={"inputs": text[:1000]},  # 避免太長
+            json={"inputs": text[:1000]},
             timeout=20
         )
         data = res.json()
@@ -138,22 +164,19 @@ def fetch_technews(keyword="台積電", limit=30):
             r = requests.get(link, headers=HEADERS)
             s = BeautifulSoup(r.text, 'html.parser')
 
-            # 標題
             title_tag = s.find('h1')
             if not title_tag:
                 continue
             title = title_tag.get_text(strip=True)
 
-            # 發布時間
             time_tag = s.find("time", class_="entry-date")
             if not time_tag:
                 continue
             published_str = time_tag.get_text(strip=True)
             published_dt = datetime.strptime(published_str, "%Y/%m/%d %H:%M").astimezone()
             if not is_recent(published_dt, 36):
-                continue  # 太舊的新聞跳過
+                continue
 
-            # 內容
             content = fetch_article_content(link, 'technews')
             news.append({'title': title, 'content': content, 'published_time': published_dt})
             time.sleep(0.5)
@@ -184,7 +207,6 @@ def fetch_yahoo_news(keyword="台積電", limit=30):
             if href and not href.startswith("http"):
                 href = base + href
 
-            # 文章內容與時間
             content = fetch_article_content(href, 'yahoo')
             try:
                 r2 = requests.get(href, headers=HEADERS)
@@ -232,10 +254,8 @@ def fetch_cnbc_news(keyword_list=["TSMC"], limit=20):
                 if not href.startswith("http"):
                     href = "https://www.cnbc.com" + href
 
-                # 內容
                 content = fetch_article_content(href, 'cnbc')
 
-                # 時間解析
                 try:
                     r2 = requests.get(href, headers=HEADERS)
                     s2 = BeautifulSoup(r2.text, 'html.parser')
@@ -272,42 +292,47 @@ def save_news(news_list, collection):
         }
 
     ref.set(data)
-    print(f"✅ Firestore 儲存完成：{collection}/{doc_id}")
-
-# ---------------------- 聯電關鍵字過濾 ---------------------- #
-def filter_umc_news(news_list):
-    """過濾掉標題與內容都不含聯電相關關鍵字的新聞"""
-    keywords = ["聯電", "聯華電子", "UMC"]
-    result = []
-    for n in news_list:
-        title = n.get("title", "")
-        content = n.get("content", "")
-        if any(kw in title or kw in content for kw in keywords):
-            result.append(n)
-        else:
-            print(f"⛔ 過濾不相關新聞：{title[:30]}")
-    return result
+    print(f"✅ Firestore 儲存完成：{collection}/{doc_id}，共 {len(news_list)} 則新聞")
 
 # ---------------------- 主程式 ---------------------- #
 if __name__ == "__main__":
 
     # 台積電
-    tsmc_news = fetch_technews("台積電", 30) + fetch_yahoo_news("台積電", 30) + fetch_cnbc_news(["TSMC"], 20)
+    print("\n========== 台積電 ==========")
+    tsmc_news = (
+        fetch_technews("台積電", 30) +
+        fetch_yahoo_news("台積電", 30) +
+        fetch_cnbc_news(["TSMC"], 20)
+    )
+    tsmc_news = filter_news_by_keywords(tsmc_news, "台積電")  # ← v8 新增
     if tsmc_news:
         tsmc_news = add_price_change(tsmc_news, "台積電")
         save_news(tsmc_news, "NEWS")
+    else:
+        print("⚠️ 台積電：過濾後無相關新聞，略過儲存")
 
     # 鴻海
+    print("\n========== 鴻海 ==========")
     fox_news = fetch_yahoo_news("鴻海", 30)
+    fox_news = filter_news_by_keywords(fox_news, "鴻海")  # ← v8 新增
     if fox_news:
         fox_news = add_price_change(fox_news, "鴻海")
         save_news(fox_news, "NEWS_Foxxcon")
+    else:
+        print("⚠️ 鴻海：過濾後無相關新聞，略過儲存")
 
-    # 聯電（加入關鍵字過濾）
-    umc_news = fetch_technews("聯電", 20) + fetch_yahoo_news("聯電", 30) + fetch_cnbc_news(["UMC"], 20)
-    umc_news = filter_umc_news(umc_news)
+    # 聯電
+    print("\n========== 聯電 ==========")
+    umc_news = (
+        fetch_technews("聯電", 20) +
+        fetch_yahoo_news("聯電", 30) +
+        fetch_cnbc_news(["UMC"], 20)
+    )
+    umc_news = filter_news_by_keywords(umc_news, "聯電")  # ← 原本的 filter_umc_news 統一改這個
     if umc_news:
         umc_news = add_price_change(umc_news, "聯電")
         save_news(umc_news, "NEWS_UMC")
+    else:
+        print("⚠️ 聯電：過濾後無相關新聞，略過儲存")
 
     print("\n🎉 全部新聞抓取完成！")
