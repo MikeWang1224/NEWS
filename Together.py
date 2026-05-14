@@ -1,14 +1,18 @@
 # -*- coding: utf-8 -*-
 """
 多公司新聞抓取程式（台積電 + 鴻海 + 聯電）
-版本：v10（聯電 Yahoo 強化版）
+版本：v11（聯華電子搜尋優化版）
 ------------------------------------------------
 ✔ 移除 Embedding
 ✔ Firestore 只存新聞資料
 ✔ Yahoo 搜尋先做標題過濾
-✔ 聯電重新加入 Yahoo
-✔ 聯電避免垃圾新聞
+✔ 聯電改搜尋「聯華電子」
+✔ 避免 Yahoo 垃圾新聞
 ✔ 只抓最近 36 小時
+✔ 自動去除重複新聞
+✔ 加入 request timeout
+✔ 加入 requests Session（速度更快）
+✔ 優化內容過短問題
 """
 
 import os
@@ -22,19 +26,24 @@ import firebase_admin
 from firebase_admin import credentials, firestore
 import yfinance as yf
 
-warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
+warnings.filterwarnings(
+    "ignore",
+    category=XMLParsedAsHTMLWarning
+)
 
-# --------------------------------------------------
-# 基本設定
-# --------------------------------------------------
+# ==================================================
+# Session（效能優化）
+# ==================================================
+
+session = requests.Session()
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0"
 }
 
-# --------------------------------------------------
+# ==================================================
 # Firestore 初始化
-# --------------------------------------------------
+# ==================================================
 
 key_dict = json.loads(os.environ["NEWS"])
 
@@ -45,9 +54,9 @@ if not firebase_admin._apps:
 
 db = firestore.client()
 
-# --------------------------------------------------
+# ==================================================
 # 股票代碼
-# --------------------------------------------------
+# ==================================================
 
 ticker_map = {
     "台積電": "2330.TW",
@@ -55,9 +64,9 @@ ticker_map = {
     "聯電": "2303.TW"
 }
 
-# --------------------------------------------------
+# ==================================================
 # 關鍵字
-# --------------------------------------------------
+# ==================================================
 
 KEYWORDS = {
 
@@ -89,19 +98,46 @@ KEYWORDS = {
     ]
 }
 
-# --------------------------------------------------
+# ==================================================
 # 時間判斷
-# --------------------------------------------------
+# ==================================================
 
 def is_recent(published_time, hours=36):
 
     now = datetime.now().astimezone()
 
-    return (now - published_time) <= timedelta(hours=hours)
+    return (
+        now - published_time
+    ) <= timedelta(hours=hours)
 
-# --------------------------------------------------
+# ==================================================
+# 去重複
+# ==================================================
+
+def deduplicate_news(news_list):
+
+    seen = set()
+    result = []
+
+    for n in news_list:
+
+        title = n.get("title", "").strip()
+
+        if not title:
+            continue
+
+        if title in seen:
+            continue
+
+        seen.add(title)
+
+        result.append(n)
+
+    return result
+
+# ==================================================
 # 新聞過濾
-# --------------------------------------------------
+# ==================================================
 
 def filter_news_by_keywords(news_list, stock_name):
 
@@ -133,20 +169,22 @@ def filter_news_by_keywords(news_list, stock_name):
         else:
 
             print(
-                f"⛔ [{stock_name}] 過濾不相關新聞："
+                f"⛔ [{stock_name}] "
+                f"過濾不相關新聞："
                 f"{title[:50]}"
             )
 
     print(
         f"✅ [{stock_name}] 過濾後剩餘："
-        f"{len(result)} 則（原始：{len(news_list)} 則）"
+        f"{len(result)} 則"
+        f"（原始：{len(news_list)} 則）"
     )
 
     return result
 
-# --------------------------------------------------
+# ==================================================
 # 抓股價漲跌
-# --------------------------------------------------
+# ==================================================
 
 def fetch_stock_change(stock_name):
 
@@ -157,7 +195,9 @@ def fetch_stock_change(stock_name):
 
     try:
 
-        df = yf.Ticker(ticker).history(period="2d")
+        df = yf.Ticker(
+            ticker
+        ).history(period="2d")
 
         if len(df) < 2:
             return "無資料"
@@ -170,14 +210,17 @@ def fetch_stock_change(stock_name):
 
         sign = "+" if diff >= 0 else ""
 
-        return f"{sign}{diff:.2f} ({sign}{pct:.2f}%)"
+        return (
+            f"{sign}{diff:.2f} "
+            f"({sign}{pct:.2f}%)"
+        )
 
     except:
         return "無資料"
 
-# --------------------------------------------------
+# ==================================================
 # 加入漲跌
-# --------------------------------------------------
+# ==================================================
 
 def add_price_change(news_list, stock_name):
 
@@ -188,21 +231,24 @@ def add_price_change(news_list, stock_name):
 
     return news_list
 
-# --------------------------------------------------
+# ==================================================
 # 抓文章內容
-# --------------------------------------------------
+# ==================================================
 
 def fetch_article_content(url, source):
 
     try:
 
-        r = requests.get(
+        r = session.get(
             url,
             headers=HEADERS,
             timeout=10
         )
 
-        soup = BeautifulSoup(r.text, "html.parser")
+        soup = BeautifulSoup(
+            r.text,
+            "html.parser"
+        )
 
         if source == "yahoo":
 
@@ -233,18 +279,18 @@ def fetch_article_content(url, source):
 
             if len(
                 p.get_text(strip=True)
-            ) > 40
+            ) > 20
 
         ])
 
-        return text[:2000]
+        return text[:2500]
 
     except:
         return ""
 
-# --------------------------------------------------
+# ==================================================
 # TechNews
-# --------------------------------------------------
+# ==================================================
 
 def fetch_technews(keyword="台積電", limit=20):
 
@@ -260,7 +306,11 @@ def fetch_technews(keyword="台積電", limit=20):
 
     try:
 
-        res = requests.get(url, headers=HEADERS)
+        res = session.get(
+            url,
+            headers=HEADERS,
+            timeout=10
+        )
 
         soup = BeautifulSoup(
             res.text,
@@ -290,9 +340,10 @@ def fetch_technews(keyword="台積電", limit=20):
 
         try:
 
-            r = requests.get(
+            r = session.get(
                 link,
-                headers=HEADERS
+                headers=HEADERS,
+                timeout=10
             )
 
             s = BeautifulSoup(
@@ -343,16 +394,16 @@ def fetch_technews(keyword="台積電", limit=20):
                 "published_time": published_dt
             })
 
-            time.sleep(0.5)
+            time.sleep(0.3)
 
         except:
             continue
 
     return news
 
-# --------------------------------------------------
-# Yahoo 新聞
-# --------------------------------------------------
+# ==================================================
+# Yahoo
+# ==================================================
 
 def fetch_yahoo_news(keyword="台積電", limit=20):
 
@@ -370,9 +421,10 @@ def fetch_yahoo_news(keyword="台積電", limit=20):
 
     try:
 
-        r = requests.get(
+        r = session.get(
             url,
-            headers=HEADERS
+            headers=HEADERS,
+            timeout=10
         )
 
         soup = BeautifulSoup(
@@ -400,13 +452,13 @@ def fetch_yahoo_news(keyword="台積電", limit=20):
 
             seen.add(title)
 
-            # --------------------------------
+            # ==========================================
             # 聯電專用標題過濾
-            # --------------------------------
+            # ==========================================
 
             title_lower = title.lower()
 
-            if keyword == "聯電":
+            if keyword in ["聯電", "聯華電子"]:
 
                 valid_keywords = [
                     "聯電",
@@ -414,7 +466,8 @@ def fetch_yahoo_news(keyword="台積電", limit=20):
                     "umc",
                     "晶圓",
                     "半導體",
-                    "成熟製程"
+                    "成熟製程",
+                    "晶片"
                 ]
 
                 if not any(
@@ -432,12 +485,15 @@ def fetch_yahoo_news(keyword="台積電", limit=20):
 
             href = a.get("href")
 
-            if href and not href.startswith("http"):
+            if not href:
+                continue
+
+            if not href.startswith("http"):
                 href = base + href
 
             try:
 
-                r2 = requests.get(
+                r2 = session.get(
                     href,
                     headers=HEADERS,
                     timeout=10
@@ -476,6 +532,10 @@ def fetch_yahoo_news(keyword="台積電", limit=20):
                     "yahoo"
                 )
 
+                # 避免空內容
+                if len(content) < 30:
+                    continue
+
                 news_list.append({
                     "title": title,
                     "content": content,
@@ -490,9 +550,9 @@ def fetch_yahoo_news(keyword="台積電", limit=20):
 
     return news_list
 
-# --------------------------------------------------
+# ==================================================
 # CNBC
-# --------------------------------------------------
+# ==================================================
 
 def fetch_cnbc_news(keyword_list, limit=20):
 
@@ -511,9 +571,10 @@ def fetch_cnbc_news(keyword_list, limit=20):
 
     try:
 
-        r = requests.get(
+        r = session.get(
             url,
-            headers=HEADERS
+            headers=HEADERS,
+            timeout=10
         )
 
         soup = BeautifulSoup(
@@ -549,7 +610,7 @@ def fetch_cnbc_news(keyword_list, limit=20):
 
             try:
 
-                r2 = requests.get(
+                r2 = session.get(
                     href,
                     headers=HEADERS,
                     timeout=10
@@ -588,6 +649,9 @@ def fetch_cnbc_news(keyword_list, limit=20):
                     "cnbc"
                 )
 
+                if len(content) < 30:
+                    continue
+
                 seen.add(title)
 
                 news.append({
@@ -604,9 +668,9 @@ def fetch_cnbc_news(keyword_list, limit=20):
 
     return news
 
-# --------------------------------------------------
+# ==================================================
 # Firestore
-# --------------------------------------------------
+# ==================================================
 
 def save_news(news_list, collection):
 
@@ -652,9 +716,9 @@ def save_news(news_list, collection):
         f"，共 {len(news_list)} 則新聞"
     )
 
-# --------------------------------------------------
+# ==================================================
 # 主程式
-# --------------------------------------------------
+# ==================================================
 
 if __name__ == "__main__":
 
@@ -688,6 +752,8 @@ if __name__ == "__main__":
             20
         )
     )
+
+    tsmc_news = deduplicate_news(tsmc_news)
 
     tsmc_news = filter_news_by_keywords(
         tsmc_news,
@@ -725,6 +791,8 @@ if __name__ == "__main__":
             20
         )
     )
+
+    fox_news = deduplicate_news(fox_news)
 
     fox_news = filter_news_by_keywords(
         fox_news,
@@ -765,7 +833,7 @@ if __name__ == "__main__":
         +
 
         fetch_yahoo_news(
-            "聯電",
+            "聯華電子",
             30
         )
 
@@ -779,6 +847,8 @@ if __name__ == "__main__":
             20
         )
     )
+
+    umc_news = deduplicate_news(umc_news)
 
     umc_news = filter_news_by_keywords(
         umc_news,
