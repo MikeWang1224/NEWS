@@ -274,6 +274,20 @@ def save_news(news_list, collection):
     ref.set(data)
     print(f"✅ Firestore 儲存完成：{collection}/{doc_id}")
 
+# ---------------------- 聯電關鍵字過濾 ---------------------- #
+def filter_umc_news(news_list):
+    """過濾掉標題與內容都不含聯電相關關鍵字的新聞"""
+    keywords = ["聯電", "聯華電子", "UMC"]
+    result = []
+    for n in news_list:
+        title = n.get("title", "")
+        content = n.get("content", "")
+        if any(kw in title or kw in content for kw in keywords):
+            result.append(n)
+        else:
+            print(f"⛔ 過濾不相關新聞：{title[:30]}")
+    return result
+
 # ---------------------- 主程式 ---------------------- #
 if __name__ == "__main__":
 
@@ -289,8 +303,9 @@ if __name__ == "__main__":
         fox_news = add_price_change(fox_news, "鴻海")
         save_news(fox_news, "NEWS_Foxxcon")
 
-    # 聯電
+    # 聯電（加入關鍵字過濾）
     umc_news = fetch_technews("聯電", 20) + fetch_yahoo_news("聯電", 30) + fetch_cnbc_news(["UMC"], 20)
+    umc_news = filter_umc_news(umc_news)
     if umc_news:
         umc_news = add_price_change(umc_news, "聯電")
         save_news(umc_news, "NEWS_UMC")
