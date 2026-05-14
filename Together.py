@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
 """
 多公司新聞抓取程式（台積電 + 鴻海 + 聯電）
-版本：v9（強化新聞相關性過濾）
+版本：v10（聯電 Yahoo 強化版）
 ------------------------------------------------
 ✔ 移除 Embedding
-✔ Firestore 只存 title/content/漲跌/時間
-✔ 所有公司統一關鍵字過濾
-✔ 聯電移除 Yahoo（避免垃圾新聞）
-✔ 新聞限制最近 36 小時
-✔ 強化 CNBC 關鍵字
+✔ Firestore 只存新聞資料
+✔ Yahoo 搜尋先做標題過濾
+✔ 聯電重新加入 Yahoo
+✔ 聯電避免垃圾新聞
+✔ 只抓最近 36 小時
 """
 
 import os
@@ -32,14 +32,22 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0"
 }
 
+# --------------------------------------------------
 # Firestore 初始化
+# --------------------------------------------------
+
 key_dict = json.loads(os.environ["NEWS"])
+
 cred = credentials.Certificate(key_dict)
 
 if not firebase_admin._apps:
     firebase_admin.initialize_app(cred)
 
 db = firestore.client()
+
+# --------------------------------------------------
+# 股票代碼
+# --------------------------------------------------
 
 ticker_map = {
     "台積電": "2330.TW",
@@ -48,10 +56,11 @@ ticker_map = {
 }
 
 # --------------------------------------------------
-# 關鍵字設定
+# 關鍵字
 # --------------------------------------------------
 
 KEYWORDS = {
+
     "台積電": [
         "台積電",
         "TSMC",
@@ -73,8 +82,10 @@ KEYWORDS = {
         "聯華電子",
         "UMC",
         "United Microelectronics",
-        "晶圓代工",
+        "晶圓",
+        "半導體",
         "成熟製程",
+        "晶圓代工",
     ]
 }
 
@@ -83,7 +94,9 @@ KEYWORDS = {
 # --------------------------------------------------
 
 def is_recent(published_time, hours=36):
+
     now = datetime.now().astimezone()
+
     return (now - published_time) <= timedelta(hours=hours)
 
 # --------------------------------------------------
@@ -109,14 +122,20 @@ def filter_news_by_keywords(news_list, stock_name):
         matched = 0
 
         for kw in keywords:
+
             if kw.lower() in full_text:
                 matched += 1
 
-        # 至少命中 1 個關鍵字
         if matched >= 1:
+
             result.append(n)
+
         else:
-            print(f"⛔ [{stock_name}] 過濾不相關新聞：{title[:50]}")
+
+            print(
+                f"⛔ [{stock_name}] 過濾不相關新聞："
+                f"{title[:50]}"
+            )
 
     print(
         f"✅ [{stock_name}] 過濾後剩餘："
@@ -126,7 +145,7 @@ def filter_news_by_keywords(news_list, stock_name):
     return result
 
 # --------------------------------------------------
-# 股價漲跌
+# 抓股價漲跌
 # --------------------------------------------------
 
 def fetch_stock_change(stock_name):
@@ -156,6 +175,10 @@ def fetch_stock_change(stock_name):
     except:
         return "無資料"
 
+# --------------------------------------------------
+# 加入漲跌
+# --------------------------------------------------
+
 def add_price_change(news_list, stock_name):
 
     change = fetch_stock_change(stock_name)
@@ -182,20 +205,36 @@ def fetch_article_content(url, source):
         soup = BeautifulSoup(r.text, "html.parser")
 
         if source == "yahoo":
-            paragraphs = soup.select("article p") or soup.select("p")
+
+            paragraphs = (
+                soup.select("article p")
+                or soup.select("p")
+            )
 
         elif source == "cnbc":
-            paragraphs = soup.select("article p") or soup.select("p")
+
+            paragraphs = (
+                soup.select("article p")
+                or soup.select("p")
+            )
 
         else:
+
             paragraphs = soup.select(
-                "div.entry-content p, div.entry-content h2"
+                "div.entry-content p, "
+                "div.entry-content h2"
             )
 
         text = "\n".join([
+
             p.get_text(strip=True)
+
             for p in paragraphs
-            if len(p.get_text(strip=True)) > 40
+
+            if len(
+                p.get_text(strip=True)
+            ) > 40
+
         ])
 
         return text[:2000]
@@ -214,20 +253,28 @@ def fetch_technews(keyword="台積電", limit=20):
     links = []
     news = []
 
-    url = f"https://technews.tw/google-search/?googlekeyword={keyword}"
+    url = (
+        "https://technews.tw/google-search/"
+        f"?googlekeyword={keyword}"
+    )
 
     try:
 
         res = requests.get(url, headers=HEADERS)
 
-        soup = BeautifulSoup(res.text, "html.parser")
+        soup = BeautifulSoup(
+            res.text,
+            "html.parser"
+        )
 
         for a in soup.find_all("a", href=True):
 
             href = a["href"]
 
             if (
-                href.startswith("https://technews.tw/")
+                href.startswith(
+                    "https://technews.tw/"
+                )
                 and "/tag/" not in href
             ):
 
@@ -243,33 +290,52 @@ def fetch_technews(keyword="台積電", limit=20):
 
         try:
 
-            r = requests.get(link, headers=HEADERS)
+            r = requests.get(
+                link,
+                headers=HEADERS
+            )
 
-            s = BeautifulSoup(r.text, "html.parser")
+            s = BeautifulSoup(
+                r.text,
+                "html.parser"
+            )
 
             title_tag = s.find("h1")
 
             if not title_tag:
                 continue
 
-            title = title_tag.get_text(strip=True)
+            title = title_tag.get_text(
+                strip=True
+            )
 
-            time_tag = s.find("time", class_="entry-date")
+            time_tag = s.find(
+                "time",
+                class_="entry-date"
+            )
 
             if not time_tag:
                 continue
 
-            published_str = time_tag.get_text(strip=True)
+            published_str = time_tag.get_text(
+                strip=True
+            )
 
             published_dt = datetime.strptime(
                 published_str,
                 "%Y/%m/%d %H:%M"
             ).astimezone()
 
-            if not is_recent(published_dt, 36):
+            if not is_recent(
+                published_dt,
+                36
+            ):
                 continue
 
-            content = fetch_article_content(link, "technews")
+            content = fetch_article_content(
+                link,
+                "technews"
+            )
 
             news.append({
                 "title": title,
@@ -285,7 +351,7 @@ def fetch_technews(keyword="台積電", limit=20):
     return news
 
 # --------------------------------------------------
-# Yahoo
+# Yahoo 新聞
 # --------------------------------------------------
 
 def fetch_yahoo_news(keyword="台積電", limit=20):
@@ -294,19 +360,30 @@ def fetch_yahoo_news(keyword="台積電", limit=20):
 
     base = "https://tw.news.yahoo.com"
 
-    url = f"{base}/search?p={keyword}&sort=time"
+    url = (
+        f"{base}/search?"
+        f"p={keyword}&sort=time"
+    )
 
     news_list = []
     seen = set()
 
     try:
 
-        r = requests.get(url, headers=HEADERS)
+        r = requests.get(
+            url,
+            headers=HEADERS
+        )
 
-        soup = BeautifulSoup(r.text, "html.parser")
+        soup = BeautifulSoup(
+            r.text,
+            "html.parser"
+        )
 
-        links = soup.select("a.js-content-viewer") \
-                or soup.select("h3 a")
+        links = (
+            soup.select("a.js-content-viewer")
+            or soup.select("h3 a")
+        )
 
         for a in links:
 
@@ -315,10 +392,43 @@ def fetch_yahoo_news(keyword="台積電", limit=20):
 
             title = a.get_text(strip=True)
 
-            if not title or title in seen:
+            if not title:
+                continue
+
+            if title in seen:
                 continue
 
             seen.add(title)
+
+            # --------------------------------
+            # 聯電專用標題過濾
+            # --------------------------------
+
+            title_lower = title.lower()
+
+            if keyword == "聯電":
+
+                valid_keywords = [
+                    "聯電",
+                    "聯華電子",
+                    "umc",
+                    "晶圓",
+                    "半導體",
+                    "成熟製程"
+                ]
+
+                if not any(
+                    k.lower() in title_lower
+                    for k in valid_keywords
+                ):
+
+                    print(
+                        f"⛔ [聯電] "
+                        f"Yahoo 標題過濾："
+                        f"{title[:50]}"
+                    )
+
+                    continue
 
             href = a.get("href")
 
@@ -333,24 +443,38 @@ def fetch_yahoo_news(keyword="台積電", limit=20):
                     timeout=10
                 )
 
-                s2 = BeautifulSoup(r2.text, "html.parser")
+                s2 = BeautifulSoup(
+                    r2.text,
+                    "html.parser"
+                )
 
                 time_tag = s2.find("time")
 
                 if not time_tag:
                     continue
 
-                if not time_tag.has_attr("datetime"):
+                if not time_tag.has_attr(
+                    "datetime"
+                ):
                     continue
 
                 published_dt = datetime.fromisoformat(
-                    time_tag["datetime"].replace("Z", "+00:00")
+                    time_tag["datetime"].replace(
+                        "Z",
+                        "+00:00"
+                    )
                 ).astimezone()
 
-                if not is_recent(published_dt, 36):
+                if not is_recent(
+                    published_dt,
+                    36
+                ):
                     continue
 
-                content = fetch_article_content(href, "yahoo")
+                content = fetch_article_content(
+                    href,
+                    "yahoo"
+                )
 
                 news_list.append({
                     "title": title,
@@ -372,7 +496,10 @@ def fetch_yahoo_news(keyword="台積電", limit=20):
 
 def fetch_cnbc_news(keyword_list, limit=20):
 
-    print(f"\n📡 CNBC：{'/'.join(keyword_list)}")
+    print(
+        f"\n📡 CNBC："
+        f"{'/'.join(keyword_list)}"
+    )
 
     news = []
     seen = set()
@@ -384,9 +511,15 @@ def fetch_cnbc_news(keyword_list, limit=20):
 
     try:
 
-        r = requests.get(url, headers=HEADERS)
+        r = requests.get(
+            url,
+            headers=HEADERS
+        )
 
-        soup = BeautifulSoup(r.text, "html.parser")
+        soup = BeautifulSoup(
+            r.text,
+            "html.parser"
+        )
 
         articles = soup.select("article a")
 
@@ -405,7 +538,6 @@ def fetch_cnbc_news(keyword_list, limit=20):
             if title in seen:
                 continue
 
-            # 必須含 keyword
             if not any(
                 k.lower() in title.lower()
                 for k in keyword_list
@@ -423,24 +555,38 @@ def fetch_cnbc_news(keyword_list, limit=20):
                     timeout=10
                 )
 
-                s2 = BeautifulSoup(r2.text, "html.parser")
+                s2 = BeautifulSoup(
+                    r2.text,
+                    "html.parser"
+                )
 
                 time_tag = s2.find("time")
 
                 if not time_tag:
                     continue
 
-                if not time_tag.has_attr("datetime"):
+                if not time_tag.has_attr(
+                    "datetime"
+                ):
                     continue
 
                 published_dt = datetime.fromisoformat(
-                    time_tag["datetime"].replace("Z", "+00:00")
+                    time_tag["datetime"].replace(
+                        "Z",
+                        "+00:00"
+                    )
                 ).astimezone()
 
-                if not is_recent(published_dt, 36):
+                if not is_recent(
+                    published_dt,
+                    36
+                ):
                     continue
 
-                content = fetch_article_content(href, "cnbc")
+                content = fetch_article_content(
+                    href,
+                    "cnbc"
+                )
 
                 seen.add(title)
 
@@ -464,21 +610,38 @@ def fetch_cnbc_news(keyword_list, limit=20):
 
 def save_news(news_list, collection):
 
-    doc_id = datetime.now().strftime("%Y%m%d")
+    doc_id = datetime.now().strftime(
+        "%Y%m%d"
+    )
 
-    ref = db.collection(collection).document(doc_id)
+    ref = db.collection(
+        collection
+    ).document(doc_id)
 
     data = {}
 
     for i, n in enumerate(news_list, 1):
 
         data[f"news_{i}"] = {
-            "title": n.get("title", ""),
-            "price_change": n.get("price_change", "無資料"),
-            "content": n.get("content", ""),
-            "published_time": n.get(
-                "published_time"
-            ).strftime("%Y-%m-%d %H:%M")
+
+            "title":
+                n.get("title", ""),
+
+            "price_change":
+                n.get(
+                    "price_change",
+                    "無資料"
+                ),
+
+            "content":
+                n.get("content", ""),
+
+            "published_time":
+                n.get(
+                    "published_time"
+                ).strftime(
+                    "%Y-%m-%d %H:%M"
+                )
         }
 
     ref.set(data)
@@ -495,17 +658,33 @@ def save_news(news_list, collection):
 
 if __name__ == "__main__":
 
-    # --------------------------------------------------
+    # ==================================================
     # 台積電
-    # --------------------------------------------------
+    # ==================================================
 
     print("\n========== 台積電 ==========")
 
     tsmc_news = (
-        fetch_technews("台積電", 20) +
-        fetch_yahoo_news("台積電", 20) +
+
+        fetch_technews(
+            "台積電",
+            20
+        )
+
+        +
+
+        fetch_yahoo_news(
+            "台積電",
+            20
+        )
+
+        +
+
         fetch_cnbc_news(
-            ["TSMC", "Taiwan Semiconductor"],
+            [
+                "TSMC",
+                "Taiwan Semiconductor"
+            ],
             20
         )
     )
@@ -522,19 +701,29 @@ if __name__ == "__main__":
             "台積電"
         )
 
-        save_news(tsmc_news, "NEWS")
+        save_news(
+            tsmc_news,
+            "NEWS"
+        )
 
     else:
-        print("⚠️ 台積電：沒有相關新聞")
 
-    # --------------------------------------------------
+        print(
+            "⚠️ 台積電：沒有相關新聞"
+        )
+
+    # ==================================================
     # 鴻海
-    # --------------------------------------------------
+    # ==================================================
 
     print("\n========== 鴻海 ==========")
 
     fox_news = (
-        fetch_yahoo_news("鴻海", 20)
+
+        fetch_yahoo_news(
+            "鴻海",
+            20
+        )
     )
 
     fox_news = filter_news_by_keywords(
@@ -549,20 +738,39 @@ if __name__ == "__main__":
             "鴻海"
         )
 
-        save_news(fox_news, "NEWS_Foxxcon")
+        save_news(
+            fox_news,
+            "NEWS_Foxxcon"
+        )
 
     else:
-        print("⚠️ 鴻海：沒有相關新聞")
 
-    # --------------------------------------------------
+        print(
+            "⚠️ 鴻海：沒有相關新聞"
+        )
+
+    # ==================================================
     # 聯電
-    # --------------------------------------------------
+    # ==================================================
 
     print("\n========== 聯電 ==========")
 
-    # ❗不再使用 Yahoo（垃圾新聞太多）
     umc_news = (
-        fetch_technews("聯電", 20) +
+
+        fetch_technews(
+            "聯電",
+            20
+        )
+
+        +
+
+        fetch_yahoo_news(
+            "聯電",
+            30
+        )
+
+        +
+
         fetch_cnbc_news(
             [
                 "UMC",
@@ -584,9 +792,15 @@ if __name__ == "__main__":
             "聯電"
         )
 
-        save_news(umc_news, "NEWS_UMC")
+        save_news(
+            umc_news,
+            "NEWS_UMC"
+        )
 
     else:
-        print("⚠️ 聯電：沒有相關新聞")
+
+        print(
+            "⚠️ 聯電：沒有相關新聞"
+        )
 
     print("\n🎉 全部新聞抓取完成！")
