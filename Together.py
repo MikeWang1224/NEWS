@@ -583,7 +583,7 @@ if __name__ == "__main__":
 
         if fox_news:
 
-            fox_news = add_price_change(
+            fox_news = add_price_change( 
                 fox_news,
                 "鴻海"
             )
