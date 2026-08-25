@@ -18,10 +18,8 @@ import requests
 from datetime import datetime, timedelta
 from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
 import warnings
-import firebase_admin
-from firebase_admin import credentials
-from google.cloud import firestore  # 改用 google-cloud-firestore 直接連線
 from google.oauth2 import service_account
+import google.auth.transport.requests
 import yfinance as yf
 
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
@@ -50,26 +48,54 @@ HF_HEADERS = {
     "Authorization": f"Bearer {HF_TOKEN}"
 }
 
-# ---------------------- Firestore ---------------------- #
+# ---------------------- Firestore（改用 REST API，繞開 grpc 傳輸層） ---------------------- #
 
 key_dict = json.loads(os.environ["NEWS"])
 
-# firebase_admin.firestore.client() 這層包裝在某些環境下對 (default) 資料庫的
-# 路徑處理有問題，會報 "Invalid database id %28default%29"（即使資料庫確實存在、
-# project 也對得上）。改用 google.cloud.firestore.Client 直接連線可以繞開這個問題。
+FIRESTORE_PROJECT_ID = key_dict["project_id"]
 FIRESTORE_DATABASE_ID = os.environ.get("FIRESTORE_DATABASE_ID", "(default)")
 
-if not firebase_admin._apps:
-    cred = credentials.Certificate(key_dict)
-    firebase_admin.initialize_app(cred)
-
-gcp_credentials = service_account.Credentials.from_service_account_info(key_dict)
-
-db = firestore.Client(
-    project=key_dict["project_id"],
-    credentials=gcp_credentials,
-    database=FIRESTORE_DATABASE_ID
+FIRESTORE_BASE_URL = (
+    f"https://firestore.googleapis.com/v1/projects/{FIRESTORE_PROJECT_ID}"
+    f"/databases/{FIRESTORE_DATABASE_ID}/documents"
 )
+
+_gcp_credentials = service_account.Credentials.from_service_account_info(
+    key_dict,
+    scopes=["https://www.googleapis.com/auth/datastore"]
+)
+
+def get_access_token():
+    """取得 Firestore REST API 用的 OAuth2 access token（過期會自動刷新）。"""
+    if not _gcp_credentials.valid:
+        _gcp_credentials.refresh(google.auth.transport.requests.Request())
+    return _gcp_credentials.token
+
+def to_firestore_value(value):
+    """把 Python 值轉成 Firestore REST API 要求的 typed JSON 格式。"""
+    if value is None:
+        return {"nullValue": None}
+    if isinstance(value, bool):
+        return {"booleanValue": value}
+    if isinstance(value, int):
+        return {"integerValue": str(value)}
+    if isinstance(value, float):
+        return {"doubleValue": value}
+    if isinstance(value, str):
+        return {"stringValue": value}
+    if isinstance(value, list):
+        return {
+            "arrayValue": {
+                "values": [to_firestore_value(v) for v in value]
+            }
+        }
+    if isinstance(value, dict):
+        return {
+            "mapValue": {
+                "fields": {k: to_firestore_value(v) for k, v in value.items()}
+            }
+        }
+    return {"stringValue": str(value)}
 
 # ---------------------- 股票對照 ---------------------- #
 
@@ -483,9 +509,7 @@ def save_news(news_list, collection):
 
     doc_id = datetime.now().strftime("%Y%m%d")
 
-    ref = db.collection(collection).document(doc_id)
-
-    data = {}
+    fields = {}
 
     for i, n in enumerate(news_list, 1):
 
@@ -493,7 +517,7 @@ def save_news(news_list, collection):
             n.get("content", "")
         )
 
-        data[f"news_{i}"] = {
+        fields[f"news_{i}"] = {
             "title": n.get("title", ""),
             "price_change": n.get("price_change", "無資料"),
             "content": n.get("content", ""),
@@ -503,9 +527,26 @@ def save_news(news_list, collection):
             ).strftime("%Y-%m-%d %H:%M")
         }
 
-    ref.set(data)
+    body = {
+        "fields": {
+            k: to_firestore_value(v)
+            for k, v in fields.items()
+        }
+    }
 
-    print(f"✅ Firestore 儲存完成：{collection}/{doc_id}")
+    url = f"{FIRESTORE_BASE_URL}/{collection}/{doc_id}"
+
+    headers = {
+        "Authorization": f"Bearer {get_access_token()}",
+        "Content-Type": "application/json"
+    }
+
+    resp = requests.patch(url, headers=headers, json=body, timeout=30)
+
+    if resp.status_code == 200:
+        print(f"✅ Firestore 儲存完成：{collection}/{doc_id}")
+    else:
+        print(f"❌ Firestore 儲存失敗：{resp.status_code} {resp.text}")
 
 # ---------------------- 主程式 ---------------------- #
 
