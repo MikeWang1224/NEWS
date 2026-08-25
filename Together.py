@@ -19,7 +19,9 @@ from datetime import datetime, timedelta
 from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
 import warnings
 import firebase_admin
-from firebase_admin import credentials, firestore
+from firebase_admin import credentials
+from google.cloud import firestore  # 改用 google-cloud-firestore 直接連線
+from google.oauth2 import service_account
 import yfinance as yf
 
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
@@ -52,22 +54,22 @@ HF_HEADERS = {
 
 key_dict = json.loads(os.environ["NEWS"])
 
-# 若你的 Firestore 資料庫「不是」預設的 (default) database（例如自訂了 database_id），
-# 需要在下面 firestore.client() 加上 database_id 參數，否則會出現：
-#   google.api_core.exceptions.InvalidArgument: 400 Invalid database id %28default%29
-# 例如：firestore.client(app=None, database_id="你的database_id")
-# 請先到 Firebase / GCP Console 確認 Firestore 資料庫已建立、且 project_id 與
-# key_dict["project_id"] 一致。
-FIRESTORE_DATABASE_ID = os.environ.get("FIRESTORE_DATABASE_ID")  # 可選
+# firebase_admin.firestore.client() 這層包裝在某些環境下對 (default) 資料庫的
+# 路徑處理有問題，會報 "Invalid database id %28default%29"（即使資料庫確實存在、
+# project 也對得上）。改用 google.cloud.firestore.Client 直接連線可以繞開這個問題。
+FIRESTORE_DATABASE_ID = os.environ.get("FIRESTORE_DATABASE_ID", "(default)")
 
 if not firebase_admin._apps:
     cred = credentials.Certificate(key_dict)
     firebase_admin.initialize_app(cred)
 
-if FIRESTORE_DATABASE_ID:
-    db = firestore.client(database_id=FIRESTORE_DATABASE_ID)
-else:
-    db = firestore.client()
+gcp_credentials = service_account.Credentials.from_service_account_info(key_dict)
+
+db = firestore.Client(
+    project=key_dict["project_id"],
+    credentials=gcp_credentials,
+    database=FIRESTORE_DATABASE_ID
+)
 
 # ---------------------- 股票對照 ---------------------- #
 
