@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 """
 多公司新聞抓取程式（台積電 + 鴻海 + 聯電）
-版本：v8-clean-filter
+版本：v8-clean-filter (patched)
 ------------------------------------------------
 ✔ 過濾不相干新聞
 ✔ title + content 雙重 keyword 檢查
 ✔ blacklist 過濾
 ✔ 36 小時內新聞
-✔ HuggingFace embedding
+✔ HuggingFace embedding（已改用新版 router.huggingface.co endpoint）
 ✔ Firestore 儲存
 """
 
@@ -30,9 +30,13 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0"
 }
 
+# 舊網域 api-inference.huggingface.co 已經停用（HF 遷移到 router.huggingface.co）
+# 新格式：https://router.huggingface.co/hf-inference/models/{model_id}/pipeline/{task}
+HF_MODEL_ID = "sentence-transformers/all-MiniLM-L6-v2"
+
 HF_API_URL = (
-    "https://api-inference.huggingface.co/pipeline/feature-extraction/"
-    "sentence-transformers/all-MiniLM-L6-v2"
+    f"https://router.huggingface.co/hf-inference/models/"
+    f"{HF_MODEL_ID}/pipeline/feature-extraction"
 )
 
 HF_TOKEN = os.environ.get("HF_TOKEN")
@@ -48,11 +52,22 @@ HF_HEADERS = {
 
 key_dict = json.loads(os.environ["NEWS"])
 
+# 若你的 Firestore 資料庫「不是」預設的 (default) database（例如自訂了 database_id），
+# 需要在下面 firestore.client() 加上 database_id 參數，否則會出現：
+#   google.api_core.exceptions.InvalidArgument: 400 Invalid database id %28default%29
+# 例如：firestore.client(app=None, database_id="你的database_id")
+# 請先到 Firebase / GCP Console 確認 Firestore 資料庫已建立、且 project_id 與
+# key_dict["project_id"] 一致。
+FIRESTORE_DATABASE_ID = os.environ.get("FIRESTORE_DATABASE_ID")  # 可選
+
 if not firebase_admin._apps:
     cred = credentials.Certificate(key_dict)
     firebase_admin.initialize_app(cred)
 
-db = firestore.client()
+if FIRESTORE_DATABASE_ID:
+    db = firestore.client(database_id=FIRESTORE_DATABASE_ID)
+else:
+    db = firestore.client()
 
 # ---------------------- 股票對照 ---------------------- #
 
@@ -158,6 +173,10 @@ def generate_embedding(text):
 
         if isinstance(data, list):
             return data
+
+        # 新 endpoint 若回傳錯誤，通常是 {"error": "..."} 這種 dict
+        if isinstance(data, dict) and "error" in data:
+            print(f"⚠️ Embedding API 錯誤: {data['error']}")
 
     except Exception as e:
         print(f"⚠️ Embedding 失敗: {e}")
